@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TinyD Control Plane</title>
+  <meta name="description" content="TinyD deterministic execution control plane" />
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand"><span class="brand-mark">T</span><div><strong>TinyD</strong><small>Control Plane</small></div></div>
+      <nav aria-label="Primary">
+        <a class="active" href="#overview">Overview</a>
+        <a href="#executions">Executions</a>
+        <a href="#workflows">Workflows</a>
+        <a href="#events">Event Ledger</a>
+        <a href="#replay">Replay</a>
+        <a href="#verification">Verification</a>
+      </nav>
+      <div class="sidebar-bottom">
+        <div class="system-state"><span class="dot"></span><div><b>Runtime healthy</b><small>deterministic mode</small></div></div>
+        <a href="#settings">Settings</a>
+      </div>
+    </aside>
+
+    <main class="main">
+      <header class="topbar">
+        <div><span class="eyebrow">EXECUTION RUNTIME</span><h1>Overview</h1></div>
+        <div class="top-actions"><button class="icon-btn" aria-label="Search">⌕</button><button class="secondary" id="replayBtn">Replay</button><button class="primary" id="runBtn">Run workflow</button></div>
+      </header>
+
+      <section id="overview" class="content">
+        <div class="hero-row">
+          <div><h2>Deterministic execution, at a glance.</h2><p>Monitor workflow state, event integrity, replay readiness, and verification without leaving the runtime surface.</p></div>
+          <div class="runtime-badge"><span class="dot"></span> LIVE <span class="mono">main</span></div>
+        </div>
+
+        <div class="metrics">
+          <article><span>Active executions</span><strong>24</strong><small class="up">+8.4% vs prior hour</small></article>
+          <article><span>Events / min</span><strong>1,842</strong><small class="up">+12.1%</small></article>
+          <article><span>Replay parity</span><strong>99.98%</strong><small>last verified 42s ago</small></article>
+          <article><span>Verification</span><strong>100%</strong><small>0 invariant failures</small></article>
+        </div>
+
+        <div class="grid-main">
+          <section class="panel execution-panel" id="executions">
+            <div class="panel-head"><div><span class="eyebrow">LIVE STREAM</span><h3>Execution activity</h3></div><button class="ghost">View all →</button></div>
+            <div class="chart"><div class="chart-grid"></div><svg viewBox="0 0 800 230" preserveAspectRatio="none" aria-label="Execution activity chart"><polyline points="0,185 55,176 110,182 165,140 220,153 275,119 330,126 385,82 440,102 495,74 550,88 605,46 660,61 720,31 800,43" fill="none" stroke="currentColor" stroke-width="3"/><polyline points="0,210 55,204 110,208 165,190 220,196 275,180 330,186 385,166 440,174 495,151 550,161 605,137 660,145 720,118 800,126" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".35"/></svg><div class="axis"><span>12:00</span><span>12:15</span><span>12:30</span><span>12:45</span><span>13:00</span></div></div>
+          </section>
+
+          <section class="panel integrity" id="verification">
+            <div class="panel-head"><div><span class="eyebrow">INTEGRITY</span><h3>Runtime status</h3></div><span class="status-pill">PASS</span></div>
+            <div class="ring"><div><strong>99.98%</strong><small>parity</small></div></div>
+            <div class="checks"><div><span class="check">✓</span> Event ordering <b>PASS</b></div><div><span class="check">✓</span> Idempotency <b>PASS</b></div><div><span class="check">✓</span> Replay safety <b>PASS</b></div><div><span class="check">✓</span> VCIR validation <b>PASS</b></div></div>
+          </section>
+        </div>
+
+        <section class="panel" id="events">
+          <div class="panel-head"><div><span class="eyebrow">EVENT LEDGER</span><h3>Recent events</h3></div><button class="ghost">Open ledger →</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Event ID</th><th>Type</th><th>Workflow</th><th>State</th><th>Timestamp</th><th></th></tr></thead><tbody>
+            <tr><td class="mono">evt_7f91c2</td><td>workflow.completed</td><td>invoice-reconciliation</td><td><span class="tag success">verified</span></td><td>13:04:22.018</td><td>→</td></tr>
+            <tr><td class="mono">evt_7f91bf</td><td>task.started</td><td>agent-routing</td><td><span class="tag live">running</span></td><td>13:04:21.994</td><td>→</td></tr>
+            <tr><td class="mono">evt_7f91b8</td><td>checkpoint.created</td><td>data-pipeline</td><td><span class="tag success">verified</span></td><td>13:04:21.672</td><td>→</td></tr>
+            <tr><td class="mono">evt_7f91b1</td><td>workflow.replayed</td><td>fraud-review</td><td><span class="tag neutral">replay</span></td><td>13:04:20.410</td><td>→</td></tr>
+          </tbody></table></div>
+        </section>
+      </section>
+    </main>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>
