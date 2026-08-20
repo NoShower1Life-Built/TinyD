@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="theme-color" content="#080b10"><title>Hot Block — Deterministic Execution</title>
+<link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+<div class="shell">
+<aside class="rail">
+  <div class="logo"><span>HB</span><div><b>Hot Block</b><small>TinyD Runtime</small></div></div>
+  <nav><a class="active" href="#dashboard">Dashboard</a><a href="#blocks">Blocks</a><a href="#stream">Event Stream</a><a href="#replay">Replay</a><a href="#verify">Verify</a><a href="#audit">Audit</a></nav>
+  <div class="rail-foot"><span class="live-dot"></span><div><b>Runtime online</b><small>deterministic / v1</small></div></div>
+</aside>
+<main>
+<header><div><small class="kicker">HOT BLOCK CONTROL</small><h1>Execution cockpit</h1></div><div class="actions"><button class="secondary" id="replay">Replay last</button><button class="primary" id="execute">Execute block</button></div></header>
+<section class="page" id="dashboard">
+  <div class="hero"><div><h2>Fast execution. Deterministic state.</h2><p>Compose, execute, inspect, and replay Hot Blocks on the TinyD runtime.</p></div><div class="mode"><i></i> LIVE <span>main</span></div></div>
+  <div class="stats"><article><small>Blocks executed</small><strong id="count">18,492</strong><em>+4.8% today</em></article><article><small>Execution latency</small><strong>12.4 ms</strong><em>p95 · 19.8 ms</em></article><article><small>Replay parity</small><strong>99.98%</strong><em>0 drift detected</em></article><article><small>Verification</small><strong>100%</strong><em>all invariants pass</em></article></div>
+  <div class="layout">
+    <section class="card" id="blocks"><div class="card-head"><div><small class="kicker">ACTIVE BLOCKS</small><h3>Execution graph</h3></div><button class="text-btn">Open graph →</button></div>
+      <div class="graph"><div class="node n1"><b>INGEST</b><span>evt.receive</span></div><div class="node n2"><b>GATE</b><span>capability.check</span></div><div class="node n3 hot"><b>HOT BLOCK</b><span>execute.v1</span></div><div class="node n4"><b>LEDGER</b><span>event.append</span></div><svg viewBox="0 0 900 250" preserveAspectRatio="none"><path d="M180 125H300M390 125H510M600 125H720" fill="none" stroke="currentColor" stroke-width="2" stroke-dasharray="5 5"/><circle cx="300" cy="125" r="4"/><circle cx="510" cy="125" r="4"/><circle cx="720" cy="125" r="4"/></svg></div>
+    </section>
+    <section class="card verify" id="verify"><div class="card-head"><div><small class="kicker">RUNTIME INTEGRITY</small><h3>Verification</h3></div><span class="pass">PASS</span></div><div class="meter"><div><strong>100%</strong><small>verified</small></div></div><ul><li>Event ordering <b>PASS</b></li><li>State hash <b>PASS</b></li><li>Replay parity <b>PASS</b></li><li>Capability boundary <b>PASS</b></li></ul></section>
+  </div>
+  <section class="card stream" id="stream"><div class="card-head"><div><small class="kicker">EVENT STREAM</small><h3>Latest execution events</h3></div><button class="text-btn">View ledger →</button></div><div class="table-wrap"><table><thead><tr><th>Event</th><th>Block</th><th>Result</th><th>Hash</th><th>Time</th></tr></thead><tbody><tr><td>block.completed</td><td class="mono">HB-8F21</td><td><span class="ok">verified</span></td><td class="mono">7fa91c…e21b</td><td>12:04:22</td></tr><tr><td>state.committed</td><td class="mono">HB-8F20</td><td><span class="ok">verified</span></td><td class="mono">3cd18a…9f44</td><td>12:04:21</td></tr><tr><td>block.replayed</td><td class="mono">HB-8F1E</td><td><span class="replay-tag">replay</span></td><td class="mono">9ab702…114c</td><td>12:04:19</td></tr><tr><td>capability.checked</td><td class="mono">HB-8F1D</td><td><span class="ok">verified</span></td><td class="mono">0e82c4…3aa1</td><td>12:04:18</td></tr></tbody></table></div></section>
+  <section class="card audit" id="audit"><div class="card-head"><div><small class="kicker">AUDIT</small><h3>Deterministic execution record</h3></div><span class="mono">trace: hb-prod-01</span></div><div class="record"><span>input</span><b>event envelope</b><span>→</span><span>policy</span><b>capability gate</b><span>→</span><span>output</span><b>state hash</b><span>→</span><span>ledger</span><b>append-only</b></div></section>
+</section>
+</main></div><script src="./app.js"></script></body></html>
