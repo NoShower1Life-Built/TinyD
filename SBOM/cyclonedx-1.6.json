@@ -1,0 +1,26 @@
+{
+  "bomFormat": "CycloneDX",
+  "specVersion": "1.6",
+  "serialNumber": "urn:uuid:tinyd-sbom-2026-08-20",
+  "version": 1,
+  "metadata": {
+    "timestamp": "2026-08-20T00:00:00Z",
+    "tools": [
+      {
+        "vendor": "OpenAI",
+        "name": "SBOM generation workflow",
+        "version": "1"
+      }
+    ],
+    "component": {
+      "type": "application",
+      "bom-ref": "pkg:github/NoShower1Life-Built/TinyD@1.0.0-alpha",
+      "group": "NoShower1Life-Built",
+      "name": "TinyD",
+      "version": "1.0.0-alpha",
+      "description": "Deterministic event sourced execution runtime",
+      "purl": "pkg:github/NoShower1Life-Built/TinyD@1.0.0-alpha"
+    }
+  },
+  "components": []
+}
