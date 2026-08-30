@@ -10,8 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 CONTROL = ROOT / "control"
 
 
-def load(name: str):
-    with (CONTROL / name).open(encoding="utf-8") as f:
+def load(path: Path):
+    with path.open(encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -21,25 +21,28 @@ def fail(errors: list[str], message: str) -> None:
 
 def main() -> int:
     errors: list[str] = []
-    model = load("control-model.json")
-    states = load("state-machine.json")
-    requirements = load("requirements.json")["requirements"]
-    tasks = load("tasks.json")["tasks"]
+    model = load(CONTROL / "control-model.json")
+    states = load(CONTROL / "state-machine.json")
+    requirements = load(CONTROL / "requirements.json")["requirements"]
+    tasks = load(CONTROL / "tasks.json")["tasks"]
+    mappings = load(ROOT / "tests" / "mappings.json")["tests"]
 
     req_ids = {r["id"] for r in requirements}
-    test_ids = {
-        test_id
-        for requirement in requirements
-        for test_id in requirement.get("tests", [])
-    }
+    mapping_by_id = {item["id"]: item for item in mappings}
     task_ids = {t["id"] for t in tasks}
 
     for requirement in requirements:
-        if not requirement.get("tests"):
+        tests = requirement.get("tests", [])
+        if not tests:
             fail(errors, f"requirement {requirement['id']} has no test")
-        for test_id in requirement.get("tests", []):
-            if test_id not in test_ids:
+        for test_id in tests:
+            mapping = mapping_by_id.get(test_id)
+            if mapping is None:
                 fail(errors, f"requirement {requirement['id']} references unknown test {test_id}")
+                continue
+            test_path = ROOT / mapping["path"]
+            if not test_path.is_file():
+                fail(errors, f"test {test_id} has no executable file: {mapping['path']}")
 
     for task in tasks:
         for dependency in task.get("dependsOn", []):
@@ -62,6 +65,11 @@ def main() -> int:
             if destination not in states["executionStates"]:
                 fail(errors, f"transition {source}->{destination} uses undeclared state {destination}")
 
+    for transition in states.get("forbiddenShortcuts", []):
+        source, destination = transition.split("->", 1)
+        if destination in allowed.get(source, []):
+            fail(errors, f"forbidden shortcut is allowed: {transition}")
+
     if not model.get("verification", {}).get("requiredPredicates"):
         fail(errors, "verification predicate set is empty")
     if not model.get("readiness", {}).get("requiredPredicates"):
@@ -74,7 +82,7 @@ def main() -> int:
         return 1
 
     print("CONTROL VALIDATION: PASS")
-    print(f"requirements={len(requirements)} tasks={len(tasks)} tests={len(test_ids)}")
+    print(f"requirements={len(requirements)} tasks={len(tasks)} tests={len(mappings)}")
     return 0
 
 
