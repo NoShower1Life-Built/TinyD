@@ -1,0 +1,25 @@
+{
+  "requirements": [
+    {
+      "id": "REQ-CONTROL-001",
+      "title": "Requirements are traceable to tests",
+      "required": true,
+      "implementation": ["control/control-model.json"],
+      "tests": ["TEST-CONTROL-001"]
+    },
+    {
+      "id": "REQ-CONTROL-002",
+      "title": "Verification requires valid evidence",
+      "required": true,
+      "implementation": ["control/control-model.json"],
+      "tests": ["TEST-CONTROL-002"]
+    },
+    {
+      "id": "REQ-CONTROL-003",
+      "title": "Task readiness respects dependencies",
+      "required": true,
+      "implementation": ["control/state-machine.json"],
+      "tests": ["TEST-CONTROL-003"]
+    }
+  ]
+}
