@@ -1,0 +1,12 @@
+{
+  "schemaVersion": "1.0.0",
+  "sourceOfTruth": "repository",
+  "derived": {
+    "requirements": {},
+    "tasks": {},
+    "executions": {},
+    "evidence": {},
+    "verification": {},
+    "release": {"state": "RELEASE_BLOCKED", "reasons": ["canonical_state_evaluator_requires_runtime_records"]}
+  }
+}
