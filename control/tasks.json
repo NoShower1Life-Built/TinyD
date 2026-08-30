@@ -1,0 +1,28 @@
+{
+  "tasks": [
+    {
+      "id": "TASK-CONTROL-001",
+      "title": "Validate canonical control model",
+      "priority": 0,
+      "dependsOn": [],
+      "state": "READY",
+      "requirements": ["REQ-CONTROL-001", "REQ-CONTROL-002", "REQ-CONTROL-003"]
+    },
+    {
+      "id": "TASK-CONTROL-002",
+      "title": "Execute control-model tests",
+      "priority": 0,
+      "dependsOn": ["TASK-CONTROL-001"],
+      "state": "PLANNED",
+      "requirements": ["REQ-CONTROL-001", "REQ-CONTROL-002", "REQ-CONTROL-003"]
+    },
+    {
+      "id": "TASK-CONTROL-003",
+      "title": "Generate verification evidence",
+      "priority": 1,
+      "dependsOn": ["TASK-CONTROL-002"],
+      "state": "PLANNED",
+      "requirements": ["REQ-CONTROL-002"]
+    }
+  ]
+}
