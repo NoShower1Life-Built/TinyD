@@ -1,0 +1,20 @@
+{
+  "executionStates": ["PLANNED", "READY", "DISPATCHED", "RUNNING", "SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"],
+  "allowedTransitions": {
+    "PLANNED": ["READY", "CANCELLED"],
+    "READY": ["DISPATCHED", "CANCELLED"],
+    "DISPATCHED": ["RUNNING", "CANCELLED"],
+    "RUNNING": ["SUCCEEDED", "FAILED", "TIMED_OUT", "CANCELLED"],
+    "SUCCEEDED": [],
+    "FAILED": ["READY", "CANCELLED"],
+    "TIMED_OUT": ["READY", "CANCELLED"],
+    "CANCELLED": []
+  },
+  "forbiddenShortcuts": [
+    "PLANNED->SUCCEEDED",
+    "PLANNED->VERIFIED",
+    "RUNNING->VERIFIED",
+    "FAILED->VERIFIED",
+    "TIMED_OUT->VERIFIED"
+  ]
+}
