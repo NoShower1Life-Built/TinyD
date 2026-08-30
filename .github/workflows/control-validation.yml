@@ -1,0 +1,23 @@
+name: Control Validation
+
+on:
+  push:
+    branches: [main, 'refine/**']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  control:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Validate control model
+        run: python3 scripts/control_validate.py
+      - name: Run executable control tests
+        run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+      - name: Generate dependency-aware queue
+        run: python3 scripts/plan.py
