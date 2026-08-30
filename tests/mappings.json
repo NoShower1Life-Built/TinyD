@@ -1,0 +1,7 @@
+{
+  "tests": [
+    {"id": "TEST-CONTROL-001", "path": "tests/test_control_model.py", "case": "test_requirements_have_tests"},
+    {"id": "TEST-CONTROL-002", "path": "tests/test_control_model.py", "case": "test_verification_predicates_require_evidence"},
+    {"id": "TEST-CONTROL-003", "path": "tests/test_control_model.py", "case": "test_planner_blocks_incomplete_dependencies"}
+  ]
+}
