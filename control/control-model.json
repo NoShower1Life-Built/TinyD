@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "TinyD Canonical Control Model",
+  "version": "1.0.0",
+  "sourceOfTruth": "repository",
+  "derivedStates": ["PLANNED", "READY", "RUNNING", "SUCCEEDED", "FAILED", "BLOCKED", "STALE", "INVALID", "PARTIAL", "VERIFIED", "RELEASE_ALLOWED", "RELEASE_BLOCKED"],
+  "verification": {
+    "requiredPredicates": [
+      "requirement_exists",
+      "implementation_complete",
+      "dependencies_satisfied",
+      "required_tests_exist",
+      "required_tests_pass",
+      "execution_exists",
+      "evidence_exists",
+      "evidence_valid",
+      "evidence_matches_source",
+      "no_blocking_findings"
+    ]
+  },
+  "readiness": {
+    "requiredPredicates": [
+      "task_exists",
+      "dependencies_exist",
+      "all_dependencies_satisfied",
+      "required_inputs_available",
+      "no_blocking_policy",
+      "task_not_stale"
+    ]
+  },
+  "release": {
+    "requiredPredicates": [
+      "all_required_requirements_verified",
+      "all_required_tests_pass",
+      "no_blocking_dependencies",
+      "no_required_evidence_missing",
+      "no_required_evidence_stale",
+      "no_unresolved_critical_findings"
+    ]
+  }
+}
