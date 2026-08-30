@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
-"""Generate an ordered queue from control/tasks.json using dependency state."""
+"""Generate a deterministic dependency-aware execution queue."""
 from __future__ import annotations
 
+import heapq
 import json
 import sys
 from pathlib import Path
@@ -18,34 +19,47 @@ def plan(tasks):
     if len(by_id) != len(tasks):
         raise ValueError("duplicate task id")
 
-    visiting: set[str] = set()
-    visited: set[str] = set()
-
-    def visit(task_id: str) -> None:
-        if task_id in visiting:
-            raise ValueError(f"dependency cycle detected at {task_id}")
-        if task_id in visited:
-            return
-        visiting.add(task_id)
-        task = by_id[task_id]
-        for dep in task.get("dependsOn", []):
-            if dep not in by_id:
-                raise ValueError(f"missing dependency {dep} for {task_id}")
-            visit(dep)
-        visiting.remove(task_id)
-        visited.add(task_id)
-
+    indegree = {task_id: 0 for task_id in by_id}
+    dependents: dict[str, list[str]] = {task_id: [] for task_id in by_id}
     for task in tasks:
-        visit(task["id"])
+        for dependency in task.get("dependsOn", []):
+            if dependency not in by_id:
+                raise ValueError(f"missing dependency {dependency} for {task['id']}")
+            indegree[task["id"]] += 1
+            dependents[dependency].append(task["id"])
 
-    ordered = []
-    for task_id in sorted(visited, key=lambda value: (by_id[value].get("priority", 999), value)):
+    heap = []
+    for task_id, degree in indegree.items():
+        if degree == 0:
+            task = by_id[task_id]
+            heapq.heappush(heap, (task.get("priority", 999), task_id))
+
+    ordered_ids = []
+    while heap:
+        _, task_id = heapq.heappop(heap)
+        ordered_ids.append(task_id)
+        for dependent in sorted(dependents[task_id]):
+            indegree[dependent] -= 1
+            if indegree[dependent] == 0:
+                task = by_id[dependent]
+                heapq.heappush(heap, (task.get("priority", 999), dependent))
+
+    if len(ordered_ids) != len(tasks):
+        cycle_nodes = sorted(task_id for task_id, degree in indegree.items() if degree > 0)
+        raise ValueError(f"dependency cycle detected: {', '.join(cycle_nodes)}")
+
+    queue = []
+    for position, task_id in enumerate(ordered_ids, start=1):
         task = by_id[task_id]
-        blockers = [dep for dep in task.get("dependsOn", []) if by_id[dep].get("state") != "COMPLETE"]
-        state = "READY" if not blockers and task.get("state") in {"PLANNED", "READY"} else task.get("state", "PLANNED")
-        if blockers:
-            state = "BLOCKED"
-        ordered.append({
+        blockers = [
+            dependency
+            for dependency in task.get("dependsOn", [])
+            if by_id[dependency].get("state") != "COMPLETE"
+        ]
+        declared_state = task.get("state", "PLANNED")
+        state = "BLOCKED" if blockers else ("READY" if declared_state in {"PLANNED", "READY"} else declared_state)
+        queue.append({
+            "position": position,
             "taskId": task_id,
             "priority": task.get("priority", 999),
             "state": state,
@@ -55,7 +69,7 @@ def plan(tasks):
             "requirements": task.get("requirements", []),
             "title": task.get("title", "")
         })
-    return ordered
+    return queue
 
 
 def main() -> int:
