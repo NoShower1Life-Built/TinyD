@@ -1,0 +1,13 @@
+{
+  "version":"1.0.0",
+  "release":"RELEASEABLE",
+  "allOf":[
+    "all_required_requirements_verified",
+    "all_required_tests_pass",
+    "required_evidence_valid",
+    "no_blocking_findings",
+    "current_source_proven"
+  ],
+  "failClosed":true,
+  "manualOverrideAllowed":false
+}
