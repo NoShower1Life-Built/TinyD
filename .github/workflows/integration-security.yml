@@ -69,12 +69,15 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          rm -rf sbom
-          mkdir -p sbom
+          rm -rf "$RUNNER_TEMP/tinyd-sbom"
+          mkdir -p "$RUNNER_TEMP/tinyd-sbom"
           docker run --rm \
             -v "$GITHUB_WORKSPACE:/src:ro" \
+            -v "$RUNNER_TEMP/tinyd-sbom:/out:rw" \
             ghcr.io/anchore/syft@sha256:94b4774193a36d4fb9f8c27d5423c153b600791b12a6925e8730d8338a334953 \
-            dir:/src -o spdx-json=/src/sbom/tinyd.spdx.json
+            dir:/src -o spdx-json=/out/tinyd.spdx.json
+          mkdir -p sbom
+          cp "$RUNNER_TEMP/tinyd-sbom/tinyd.spdx.json" sbom/tinyd.spdx.json
           python - <<'PY'
           import json
           from pathlib import Path
