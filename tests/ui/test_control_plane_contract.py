@@ -13,7 +13,8 @@ def test_api_values_use_text_nodes_not_inner_html():
 def test_assurance_status_is_explicitly_projection_bound():
     assert 'id="assuranceStatus"' in HTML
     assert "derived_status" in JS
-    assert "summary.assurance_projection" in JS
+    assert "/api/v1/assurance/projection" in JS
+    assert "summary.assurance_projection" not in JS
 
 
 def test_provenance_and_artifact_views_are_not_static_proof_claims():
