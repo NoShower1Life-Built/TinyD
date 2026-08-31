@@ -1,8 +1,9 @@
 from __future__ import annotations
 import hashlib, hmac, os
-from typing import Any
+from typing import Any, Mapping
 from fastapi import FastAPI, Header, HTTPException, Query, Response
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, ConfigDict
 import psycopg
 from psycopg.rows import dict_row
 
@@ -45,6 +46,49 @@ def query(sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
 
 def auth(x_tinyd_tenant_id: str | None, x_tinyd_tenant_signature: str | None) -> str: return tenant(x_tinyd_tenant_id, x_tinyd_tenant_signature)
 
+class AssuranceProjectionPartial(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    projection_version: str = "1-partial"
+    tenant_id: str
+    derived_status: str
+    authoritative_source: str
+    requirement_id: str | None
+    implementation_ref: str | None
+    test_ref: str | None
+    execution_ref: str | None
+    evidence_refs: tuple[str, ...]
+    provenance_refs: tuple[str, ...]
+    verification_refs: tuple[str, ...]
+    replay_verification_ref: str | None
+    trust_root_ref: str | None
+    unavailable_dimensions: tuple[str, ...]
+    assurance_assertion: str
+
+
+def build_partial_projection(tenant_id: str, executions: list[Mapping[str, Any]], evidence: list[Mapping[str, Any]], replay: list[Mapping[str, Any]]) -> AssuranceProjectionPartial:
+    execution_ref = str(executions[0]["execution_id"]) if executions else None
+    evidence_refs = tuple(str(row["evidence_id"]) for row in evidence if row.get("evidence_id") is not None)
+    provenance_refs = tuple(sorted({str(row["provenance_id"]) for row in evidence if row.get("provenance_id") is not None}))
+    verification_refs = tuple(str(row["verification_id"]) for row in replay if row.get("verification_id") is not None)
+    replay_ref = verification_refs[0] if verification_refs else None
+    unavailable = ("requirement", "implementation", "test_certification", "trust_root")
+    return AssuranceProjectionPartial(
+        tenant_id=tenant_id,
+        derived_status="UNPROVEN",
+        authoritative_source="TinyD API authoritative projections",
+        requirement_id=None,
+        implementation_ref=None,
+        test_ref=None,
+        execution_ref=execution_ref,
+        evidence_refs=evidence_refs,
+        provenance_refs=provenance_refs,
+        verification_refs=verification_refs,
+        replay_verification_ref=replay_ref,
+        trust_root_ref=None,
+        unavailable_dimensions=unavailable,
+        assurance_assertion="UNPROVEN: authoritative requirement, implementation, test certification, and trust-root records are not exposed by the existing API source",
+    )
+
 @app.get("/health")
 def health(): return {"status":"ok", "service":"tinyd-api"}
 
@@ -54,6 +98,15 @@ def assurance_summary(x_tinyd_tenant_id: str | None = Header(default=None), x_ti
     rows=query("SELECT count(*)::bigint AS evidence_count, count(DISTINCT execution_id)::bigint AS execution_count, count(*) FILTER (WHERE artifact_digest IS NOT NULL)::bigint AS artifact_count, count(*) FILTER (WHERE policy_version IS NOT NULL)::bigint AS policy_bound_count FROM evidence_ledger WHERE tenant_id=%s",(t,))
     verified=query("SELECT count(*)::bigint AS verified_count FROM verification_evidence WHERE tenant_id=%s AND result='VERIFIED'",(t,)); failed=query("SELECT count(*)::bigint AS failed_count FROM verification_evidence WHERE tenant_id=%s AND result='FAILED'",(t,)); return {**rows[0],**verified[0],**failed[0]}
 
+@app.get("/api/v1/assurance/projection", response_model=AssuranceProjectionPartial)
+def assurance_projection(x_tinyd_tenant_id: str | None = Header(default=None), x_tinyd_tenant_signature: str | None = Header(default=None)):
+    """Read-only partial Scoreboard projection from existing authoritative API records."""
+    t = auth(x_tinyd_tenant_id, x_tinyd_tenant_signature)
+    executions_rows = query("SELECT execution_id,min(created_at) AS first_seen,max(created_at) AS last_seen,count(*)::bigint AS event_count,max(event_type) AS last_event_type FROM evidence_ledger WHERE tenant_id=%s GROUP BY execution_id ORDER BY last_seen DESC LIMIT 1", (t,))
+    evidence_rows = query("SELECT evidence_id,provenance_id FROM evidence_ledger WHERE tenant_id=%s ORDER BY sequence DESC LIMIT 100", (t,))
+    replay_rows = query("SELECT v.verification_id FROM verification_evidence v JOIN evidence_ledger e ON e.tenant_id=v.tenant_id AND e.record_digest=v.evidence_digest WHERE v.tenant_id=%s ORDER BY v.created_at DESC LIMIT 100", (t,))
+    return build_partial_projection(t, executions_rows, evidence_rows, replay_rows)
+
 @app.get("/api/v1/executions")
 def executions(x_tinyd_tenant_id: str | None=Header(default=None), x_tinyd_tenant_signature: str | None=Header(default=None), limit:int=Query(50,ge=1,le=200)):
     t=auth(x_tinyd_tenant_id,x_tinyd_tenant_signature); return query("SELECT execution_id,min(created_at) AS first_seen,max(created_at) AS last_seen,count(*)::bigint AS event_count,max(event_type) AS last_event_type FROM evidence_ledger WHERE tenant_id=%s GROUP BY execution_id ORDER BY last_seen DESC LIMIT %s",(t,limit))
@@ -61,7 +114,7 @@ def executions(x_tinyd_tenant_id: str | None=Header(default=None), x_tinyd_tenan
 _EVIDENCE_COLUMNS="evidence_id, sequence, event_id, event_type, execution_id, actor, capability, operation, policy_id, policy_version, policy_digest, code_digest, artifact_digest, input_digest, output_digest, provenance_id, idempotency_key, event_digest, previous_record_digest, record_digest, created_at"
 
 @app.get("/api/v1/evidence")
-def evidence(x_tinyd_tenant_id: str | None=Header(default=None), x_tinyd_tenant_signature: str | None=Header(default=None), execution_id:str|None=None, limit:int=Query(100,ge=1,le=500)):
+def evidence(x_tinyd_tenant_id:str|None=Header(default=None), x_tinyd_tenant_signature:str|None=Header(default=None), execution_id:str|None=None, limit:int=Query(100,ge=1,le=500)):
     t=auth(x_tinyd_tenant_id,x_tinyd_tenant_signature); sql=f"SELECT {_EVIDENCE_COLUMNS} FROM evidence_ledger WHERE tenant_id=%s"; params=[t]
     if execution_id: sql += " AND execution_id=%s"; params.append(execution_id)
     sql += " ORDER BY sequence DESC LIMIT %s"; params.append(limit); return query(sql,tuple(params))
