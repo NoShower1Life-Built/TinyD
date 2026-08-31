@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS evidence_ledger (
     artifact_digest CHAR(64), input_digest CHAR(64), output_digest CHAR(64), provenance_id TEXT,
     idempotency_key TEXT NOT NULL, event_digest CHAR(64) NOT NULL, previous_record_digest CHAR(64),
     record_digest CHAR(64) NOT NULL, created_at TIMESTAMPTZ NOT NULL,
-    PRIMARY KEY (tenant_id, sequence), UNIQUE (tenant_id, evidence_id), UNIQUE (tenant_id, idempotency_key), UNIQUE (tenant_id, event_id)
+    PRIMARY KEY (tenant_id, sequence), UNIQUE (tenant_id, evidence_id), UNIQUE (tenant_id, idempotency_key), UNIQUE (tenant_id, event_id), UNIQUE (tenant_id, record_digest)
 );
 CREATE TABLE IF NOT EXISTS policy_versions (
     policy_id TEXT NOT NULL, version TEXT NOT NULL, policy_digest CHAR(64) NOT NULL, policy_json JSONB NOT NULL,
