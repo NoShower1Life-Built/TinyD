@@ -10,7 +10,7 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     env:
-      TINYD_TENANT_SIGNING_KEY: ci-only-test-key-not-a-secret
+      TINYD_TENANT_SIGNING_KEY: ci-only-test-key-0123456789-abcdef
       TINYD_DISABLE_API_DOCS: "true"
     steps:
       - uses: actions/checkout@v4
