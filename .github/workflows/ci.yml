@@ -13,10 +13,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
-      - name: Install runtime and test dependencies
-        run: python -m pip install --upgrade pip && python -m pip install 'cryptography>=44,<47' 'pytest>=8,<9'
+          python-version: "3.12"
+      - name: Install pinned runtime and test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
       - name: Compile source
         run: python -m compileall -q apps packages tests
+      - name: Import API
+        run: python -c "from apps.api.main import app; assert app.title == 'TinyD API'"
       - name: Execute tests
         run: python -m pytest -q
