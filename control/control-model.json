@@ -1,0 +1,40 @@
+{
+  "schema_version": "1.0",
+  "system": "TinyD+Scoreboard",
+  "authority": {
+    "execution": "TinyD",
+    "canonical_events": "event-model",
+    "ledger": "postgresql",
+    "stream": "kafka",
+    "assurance": "Scoreboard-derived"
+  },
+  "invariants": [
+    "canonical-event-evidence-model",
+    "single-execution-truth",
+    "kafka-postgres-responsibility-separation",
+    "effectively-once-idempotent-semantics",
+    "separate-evidence-verification-trust-domains",
+    "immutable-versioned-policies",
+    "digest-addressed-artifacts",
+    "canonical-provenance",
+    "independent-replay-verification",
+    "secret-exclusion",
+    "end-to-end-tenant-isolation",
+    "telemetry-is-not-authoritative-ledger",
+    "cryptographic-trust-root-key-lifecycle",
+    "interface-first-no-premature-microservices",
+    "verification-results-are-immutable-evidence"
+  ],
+  "interfaces": [
+    "PolicyEngine",
+    "EvidenceWriter",
+    "EvidenceVerifier",
+    "ProvenanceResolver",
+    "IntegrityVerifier",
+    "ArtifactAttestor",
+    "OwnershipRegistry",
+    "ReplayVerifier"
+  ],
+  "lifecycle": ["SPEC", "POLICY", "CODE", "BUILD", "ATTEST", "EXECUTE", "OBSERVE", "RECORD", "VERIFY", "PROVE", "AUDIT"],
+  "release_rule": "No evidence means not verified; failed tests or incomplete dependencies block completion."
+}

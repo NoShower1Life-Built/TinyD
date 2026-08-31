@@ -1,0 +1,203 @@
+name: TinyD Integration Security
+
+on:
+  push:
+    branches: [main, feat/scoreboard-assurance-v1]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  TEST_RLS_TENANT_ID: ci-rls-tenant
+  TEST_EVIDENCE_TENANT_ID: ci-evidence-tenant
+  TEST_ASSURANCE_TENANT_ID: ci-assurance-tenant
+
+jobs:
+  integration-security:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16.4@sha256:e62fbf9d3e2b49816a32c400ed2dba83e3b361e6833e624024309c35d334b412
+        env:
+          POSTGRES_USER: tinyd
+          POSTGRES_PASSWORD: ci-postgres-only
+          POSTGRES_DB: tinyd
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U tinyd -d tinyd"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+      kafka:
+        image: apache/kafka:3.8.1@sha256:22c4bea38875408e8f9fe52aca8e3a6ee67f9aa0090db59af99a2f6647558db5
+        env:
+          KAFKA_NODE_ID: 1
+          KAFKA_PROCESS_ROLES: broker,controller
+          KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+          KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+          KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+          KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+        ports:
+          - 9092:9092
+        options: >-
+          --health-cmd="/opt/kafka/bin/kafka-broker-api-versions.sh --bootstrap-server localhost:9092"
+          --health-interval=10s
+          --health-timeout=10s
+          --health-retries=20
+    env:
+      DATABASE_URL: postgresql://tinyd:ci-postgres-only@127.0.0.1:5432/tinyd
+      KAFKA_BOOTSTRAP_SERVERS: 127.0.0.1:9092
+      TINYD_TENANT_SIGNING_KEY: ci-only-test-key-0123456789-abcdef
+      TINYD_DISABLE_API_DOCS: "true"
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.12"
+      - name: Install CI dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements-ci.txt
+      - name: Generate and validate repository SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf "$RUNNER_TEMP/tinyd-sbom"
+          mkdir -p "$RUNNER_TEMP/tinyd-sbom"
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            -v "$RUNNER_TEMP/tinyd-sbom:/out:rw" \
+            ghcr.io/anchore/syft@sha256:94b4774193a36d4fb9f8c27d5423c153b600791b12a6925e8730d8338a334953 \
+            dir:/src -o spdx-json=/out/tinyd.spdx.json
+          mkdir -p sbom
+          cp "$RUNNER_TEMP/tinyd-sbom/tinyd.spdx.json" sbom/tinyd.spdx.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("sbom/tinyd.spdx.json")
+          document = json.loads(path.read_text(encoding="utf-8"))
+          required = ("spdxVersion", "dataLicense", "SPDXID", "name", "documentNamespace", "creationInfo", "packages")
+          missing = [key for key in required if key not in document]
+          if missing:
+              raise SystemExit(f"SBOM missing required SPDX fields: {missing}")
+          if not isinstance(document["packages"], list):
+              raise SystemExit("SBOM packages must be an array")
+          if not document["packages"]:
+              raise SystemExit("SBOM contains no packages")
+          PY
+          git archive --format=tar --prefix=tinyd/ HEAD | sha256sum | awk '{print $1}' > sbom/source-tree.sha256
+          sha256sum sbom/tinyd.spdx.json > sbom/tinyd.spdx.json.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          sbom = Path("sbom/tinyd.spdx.json")
+          sbom_sha = Path("sbom/tinyd.spdx.json.sha256").read_text(encoding="utf-8").split()[0]
+          source_sha = Path("sbom/source-tree.sha256").read_text(encoding="utf-8").strip()
+          attestation = {
+              "schema": "tinyd.sbom-attestation.v1",
+              "repository": "NoShower1Life-Built/TinyD",
+              "commit": os.environ["GITHUB_SHA"],
+              "source_tree_sha256": source_sha,
+              "sbom_path": str(sbom),
+              "sbom_sha256": sbom_sha,
+              "format": "SPDX-2.3-json",
+              "generator": "anchore/syft",
+              "generator_image": "ghcr.io/anchore/syft@sha256:94b4774193a36d4fb9f8c27d5423c153b600791b12a6925e8730d8338a334953",
+          }
+          Path("sbom/tinyd.sbom-attestation.json").write_text(json.dumps(attestation, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          sha256sum sbom/tinyd.sbom-attestation.json > sbom/tinyd.sbom-attestation.json.sha256
+      - name: Preserve digest-bound SBOM evidence
+        id: upload-sbom
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tinyd-sbom-${{ github.sha }}
+          path: sbom/
+          if-no-files-found: error
+      - name: Record SBOM artifact digest
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload-sbom.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_DIGEST"
+          {
+            echo '### SBOM evidence'
+            echo
+            echo "Artifact SHA-256: \`$ARTIFACT_DIGEST\`"
+            echo "SBOM SHA-256: \`$(cut -d' ' -f1 sbom/tinyd.spdx.json.sha256)\`"
+            echo "Source tree SHA-256: \`$(cat sbom/source-tree.sha256)\`"
+            echo "Commit: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Wait for PostgreSQL and Kafka
+        shell: bash
+        run: |
+          set -euo pipefail
+          postgres_ready=false
+          for i in {1..30}; do
+            if pg_isready -h 127.0.0.1 -p 5432 -U tinyd -d tinyd; then postgres_ready=true; break; fi
+            sleep 2
+          done
+          [[ "$postgres_ready" == true ]] || { echo 'PostgreSQL did not become ready' >&2; exit 1; }
+          kafka_ready=false
+          for i in {1..30}; do
+            if python - <<'PY'
+          import socket
+          s=socket.create_connection(('127.0.0.1',9092),2)
+          s.close()
+          PY
+            then kafka_ready=true; break; fi
+            sleep 2
+          done
+          [[ "$kafka_ready" == true ]] || { echo 'Kafka did not become reachable' >&2; exit 1; }
+      - name: Apply every migration to a clean PostgreSQL database
+        shell: bash
+        run: |
+          set -euo pipefail
+          migrations=(migrations/*.sql)
+          ((${#migrations[@]} > 0)) || { echo 'No migrations found' >&2; exit 1; }
+          for migration in "${migrations[@]}"; do
+            echo "Applying $migration"
+            PGPASSWORD=ci-postgres-only psql "$DATABASE_URL" --set ON_ERROR_STOP=1 -f "$migration"
+          done
+      - name: Create least-privilege RLS test role
+        shell: bash
+        run: |
+          set -euo pipefail
+          PGPASSWORD=ci-postgres-only psql "$DATABASE_URL" --set ON_ERROR_STOP=1 <<'SQL'
+          DO $$
+          BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'tinyd_app') THEN
+              CREATE ROLE tinyd_app LOGIN PASSWORD 'ci-app-only';
+            END IF;
+          END
+          $$;
+          ALTER ROLE tinyd_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT;
+          GRANT USAGE ON SCHEMA public TO tinyd_app;
+          GRANT SELECT, INSERT ON evidence_ledger TO tinyd_app;
+          SQL
+      - name: Exercise tenant RLS and missing tenant context
+        env:
+          RLS_DATABASE_URL: postgresql://tinyd_app:ci-app-only@127.0.0.1:5432/tinyd
+          TEST_TENANT_ID: ${{ env.TEST_RLS_TENANT_ID }}
+        run: python tests/integration/test_postgres_rls.py
+      - name: Validate evidence hash chain and recorded replay verification
+        env:
+          TEST_TENANT_ID: ${{ env.TEST_EVIDENCE_TENANT_ID }}
+        run: python tests/integration/test_postgres_evidence_replay.py
+      - name: Validate assurance boundary contracts
+        env:
+          DATABASE_URL: postgresql://tinyd_app:ci-app-only@127.0.0.1:5432/tinyd
+          TEST_TENANT_ID: ${{ env.TEST_ASSURANCE_TENANT_ID }}
+        run: python tests/integration/test_assurance_boundaries.py
+      - name: Exercise real Kafka event transport
+        run: python tests/integration/test_kafka_event_transport.py

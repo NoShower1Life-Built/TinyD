@@ -1,5 +1,9 @@
 [project]
 name = "tinyd"
-version = "1.0.0-alpha"
-description = "Deterministic event sourced execution runtime"
+version = "1.1.0-alpha"
+description = "Deterministic event sourced execution runtime with integrated assurance"
 requires-python = ">=3.11"
+dependencies = ["cryptography>=44,<47"]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9"]

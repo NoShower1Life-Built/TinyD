@@ -3,72 +3,24 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>TinyD Control Plane</title>
-  <meta name="description" content="TinyD deterministic execution control plane" />
+  <meta name="description" content="TinyD Scoreboard — deterministic execution assurance, provenance, integrity and verification" />
+  <meta name="tinyd-api-base" content="" />
+  <meta name="tinyd-tenant-id" content="" />
+  <meta name="tinyd-tenant-signature" content="" />
+  <meta name="tinyd-tenant-source" content="server-authenticated-bootstrap" />
+  <title>TinyD Scoreboard</title>
   <link rel="stylesheet" href="./styles.css" />
 </head>
 <body>
-  <div class="app-shell">
-    <aside class="sidebar">
-      <div class="brand"><span class="brand-mark">T</span><div><strong>TinyD</strong><small>Control Plane</small></div></div>
-      <nav aria-label="Primary">
-        <a class="active" href="#overview">Overview</a>
-        <a href="#executions">Executions</a>
-        <a href="#workflows">Workflows</a>
-        <a href="#events">Event Ledger</a>
-        <a href="#replay">Replay</a>
-        <a href="#verification">Verification</a>
-      </nav>
-      <div class="sidebar-bottom">
-        <div class="system-state"><span class="dot"></span><div><b>Runtime healthy</b><small>deterministic mode</small></div></div>
-        <a href="#settings">Settings</a>
-      </div>
-    </aside>
-
-    <main class="main">
-      <header class="topbar">
-        <div><span class="eyebrow">EXECUTION RUNTIME</span><h1>Overview</h1></div>
-        <div class="top-actions"><button class="icon-btn" aria-label="Search">⌕</button><button class="secondary" id="replayBtn">Replay</button><button class="primary" id="runBtn">Run workflow</button></div>
-      </header>
-
-      <section id="overview" class="content">
-        <div class="hero-row">
-          <div><h2>Deterministic execution, at a glance.</h2><p>Monitor workflow state, event integrity, replay readiness, and verification without leaving the runtime surface.</p></div>
-          <div class="runtime-badge"><span class="dot"></span> LIVE <span class="mono">main</span></div>
-        </div>
-
-        <div class="metrics">
-          <article><span>Active executions</span><strong>24</strong><small class="up">+8.4% vs prior hour</small></article>
-          <article><span>Events / min</span><strong>1,842</strong><small class="up">+12.1%</small></article>
-          <article><span>Replay parity</span><strong>99.98%</strong><small>last verified 42s ago</small></article>
-          <article><span>Verification</span><strong>100%</strong><small>0 invariant failures</small></article>
-        </div>
-
-        <div class="grid-main">
-          <section class="panel execution-panel" id="executions">
-            <div class="panel-head"><div><span class="eyebrow">LIVE STREAM</span><h3>Execution activity</h3></div><button class="ghost">View all →</button></div>
-            <div class="chart"><div class="chart-grid"></div><svg viewBox="0 0 800 230" preserveAspectRatio="none" aria-label="Execution activity chart"><polyline points="0,185 55,176 110,182 165,140 220,153 275,119 330,126 385,82 440,102 495,74 550,88 605,46 660,61 720,31 800,43" fill="none" stroke="currentColor" stroke-width="3"/><polyline points="0,210 55,204 110,208 165,190 220,196 275,180 330,186 385,166 440,174 495,151 550,161 605,137 660,145 720,118 800,126" fill="none" stroke="currentColor" stroke-width="1.5" opacity=".35"/></svg><div class="axis"><span>12:00</span><span>12:15</span><span>12:30</span><span>12:45</span><span>13:00</span></div></div>
-          </section>
-
-          <section class="panel integrity" id="verification">
-            <div class="panel-head"><div><span class="eyebrow">INTEGRITY</span><h3>Runtime status</h3></div><span class="status-pill">PASS</span></div>
-            <div class="ring"><div><strong>99.98%</strong><small>parity</small></div></div>
-            <div class="checks"><div><span class="check">✓</span> Event ordering <b>PASS</b></div><div><span class="check">✓</span> Idempotency <b>PASS</b></div><div><span class="check">✓</span> Replay safety <b>PASS</b></div><div><span class="check">✓</span> VCIR validation <b>PASS</b></div></div>
-          </section>
-        </div>
-
-        <section class="panel" id="events">
-          <div class="panel-head"><div><span class="eyebrow">EVENT LEDGER</span><h3>Recent events</h3></div><button class="ghost">Open ledger →</button></div>
-          <div class="table-wrap"><table><thead><tr><th>Event ID</th><th>Type</th><th>Workflow</th><th>State</th><th>Timestamp</th><th></th></tr></thead><tbody>
-            <tr><td class="mono">evt_7f91c2</td><td>workflow.completed</td><td>invoice-reconciliation</td><td><span class="tag success">verified</span></td><td>13:04:22.018</td><td>→</td></tr>
-            <tr><td class="mono">evt_7f91bf</td><td>task.started</td><td>agent-routing</td><td><span class="tag live">running</span></td><td>13:04:21.994</td><td>→</td></tr>
-            <tr><td class="mono">evt_7f91b8</td><td>checkpoint.created</td><td>data-pipeline</td><td><span class="tag success">verified</span></td><td>13:04:21.672</td><td>→</td></tr>
-            <tr><td class="mono">evt_7f91b1</td><td>workflow.replayed</td><td>fraud-review</td><td><span class="tag neutral">replay</span></td><td>13:04:20.410</td><td>→</td></tr>
-          </tbody></table></div>
-        </section>
-      </section>
-    </main>
-  </div>
-  <script src="./app.js"></script>
-</body>
-</html>
+<div class="app-shell">
+  <aside class="sidebar"><div class="brand"><span class="brand-mark">T</span><div><strong>TinyD</strong><small>Scoreboard</small></div></div><div class="authority"><span class="eyebrow">AUTHORITY MODEL</span><div><b>TinyD</b><span>execution truth</span></div><div><b>Scoreboard</b><span>derived assurance</span></div></div><nav aria-label="Primary"><a class="active" href="#overview">Overview</a><a href="#assurance">Assurance</a><a href="#executions">Executions</a><a href="#evidence">Evidence Ledger</a><a href="#provenance">Provenance</a><a href="#authorization">Authorization</a><a href="#artifacts">Artifacts</a><a href="#replay">Replay Verification</a><a href="#policies">Policies</a><a href="#audit">Audit</a></nav><div class="sidebar-bottom"><div class="system-state"><span class="dot"></span><div><b id="connectionState">Connecting</b><small id="connectionDetail">authoritative API boundary</small></div></div></div></aside>
+  <main class="main"><header class="topbar"><div><span class="eyebrow">ASSURANCE CONTROL PLANE</span><h1>Scoreboard</h1></div><div class="top-actions"><span class="tenant">TENANT: <b id="tenantValue">CONTEXT REQUIRED</b></span><button class="secondary" id="replayBtn" disabled>Refresh verification</button><button class="primary" id="runBtn" disabled>Run workflow</button></div></header>
+  <section id="overview" class="content"><div class="hero-row"><div><div class="section-kicker">TINYD + SCOREBOARD</div><h2>Execution truth with evidentiary assurance.</h2><p>One canonical event model connects policy, execution, provenance, integrity, attestation, verification and audit. No secondary execution truth.</p></div><div class="runtime-badge"><span class="dot"></span><span id="runtimeState">CONNECTING</span></div></div><div class="authority-strip"><div><span class="eyebrow">EXECUTION AUTHORITY</span><strong>TinyD Kernel</strong><small>Kafka event stream · deterministic scheduler · stateless workers</small></div><div class="arrow">→</div><div><span class="eyebrow">ASSURANCE AUTHORITY</span><strong>Scoreboard</strong><small>Evidence ledger · verification · provenance · attestations</small></div><div class="arrow">→</div><div><span class="eyebrow">OPERATIONAL TELEMETRY</span><strong>OTel / Prometheus</strong><small>Observability only · never authoritative ledger</small></div></div>
+  <section class="panel" id="assurance"><div class="panel-head"><div><span class="eyebrow">CANONICAL PROJECTION</span><h3>Assurance status</h3></div><span class="status-pill neutral-pill" id="assuranceStatus">UNPROVEN</span></div><div class="contract-list"><div><b>Status authority</b><span id="assuranceAuthority">Authoritative Scoreboard projection</span></div><div><b>Requirement</b><span id="assuranceRequirement">No authoritative requirement loaded</span></div><div><b>Evidence dependency</b><span id="assuranceEvidence">No projection loaded</span></div><div><b>Replay dependency</b><span id="assuranceReplay">No projection loaded</span></div></div></section>
+  <div class="metrics" aria-label="Assurance status"><article><span>Execution truth</span><strong id="metricExecutions">NO DATA</strong><small id="metricExecutionsDetail">API projection pending</small></article><article><span>Evidence integrity</span><strong id="metricEvidence">NO DATA</strong><small id="metricEvidenceDetail">API projection pending</small></article><article><span>Replay verification</span><strong id="metricReplay">NO DATA</strong><small id="metricReplayDetail">API projection pending</small></article><article><span>Policy compliance</span><strong id="metricPolicy">NO DATA</strong><small id="metricPolicyDetail">API projection pending</small></article><article><span>Artifact attestation</span><strong id="metricArtifacts">NO DATA</strong><small id="metricArtifactsDetail">API projection pending</small></article><article><span>Tenant isolation</span><strong id="metricTenant">UNKNOWN</strong><small id="metricTenantDetail">Database boundary not yet confirmed</small></article></div>
+  <section class="panel" id="executions"><div class="panel-head"><div><span class="eyebrow">EXECUTION PROJECTION</span><h3>Kernel executions</h3></div></div><div class="empty-state" id="executionState"><strong>Loading authoritative executions</strong><span>Execution state is read-only and tenant-scoped.</span></div></section>
+  <section class="panel"><div class="panel-head"><div><span class="eyebrow">CANONICAL LIFECYCLE</span><h3>Assurance chain</h3></div><span class="status-pill">DATA-BOUND</span></div><div class="lifecycle">SPEC <i>→</i> POLICY <i>→</i> CODE <i>→</i> BUILD <i>→</i> ATTEST <i>→</i> EXECUTE <i>→</i> OBSERVE <i>→</i> RECORD <i>→</i> VERIFY <i>→</i> PROVE <i>→</i> AUDIT</div></section>
+  <div class="grid-main"><section class="panel" id="evidence"><div class="panel-head"><div><span class="eyebrow">CANONICAL LEDGER</span><h3>Evidence boundary</h3></div><span class="status-pill">APPEND-ONLY</span></div><div class="empty-state" id="evidenceState"><strong>Loading authoritative evidence</strong><span>Data is read from the tenant-scoped PostgreSQL projection. No client-side events are generated.</span><code>Kafka → EvidenceWriter → PostgreSQL → API</code></div></section><section class="panel" id="authorization"><div class="panel-head"><div><span class="eyebrow">AUTHORIZATION</span><h3>Policy binding</h3></div></section></div>
+  <div class="grid-three"><section class="panel" id="provenance"><div class="panel-head"><div><span class="eyebrow">PROVENANCE</span><h3>Canonical graph</h3></div></div><div class="graph" id="provenanceState"><div>Awaiting authoritative projection</div><i>↓</i><div>UNPROVEN until data-bound</div></div></section><section class="panel" id="artifacts"><div class="panel-head"><div><span class="eyebrow">ARTIFACTS</span><h3>Integrity & attestation</h3></div></div><div class="contract-list" id="artifactState"><div><b>Observed digest</b><span>Awaiting authoritative projection</span></div><div><b>Attestation</b><span>Awaiting authoritative projection</span></div><div><b>Trust root</b><span>UNPROVEN until authoritative evidence exists</span></div><div><b>SBOM / license</b><span>Awaiting authoritative evidence</span></div></div></section><section class="panel" id="replay"><div class="panel-head"><div><span class="eyebrow">REPLAY</span><h3>Recorded vs independent</h3></div></div><div class="empty-state compact" id="replayState"><strong>Loading recorded verification</strong><span>Recorded verification is not represented as independent replay execution.</span><code>ReplayVerifier → verification evidence</code></div></section></div>
+  <section class="panel" id="audit"><div class="panel-head"><div><span class="eyebrow">ASSURANCE CONTRACTS</span><h3>Mandatory interfaces</h3></div><span class="status-pill">IN-PROCESS</span></div><div class="interface-grid"><span>PolicyEngine</span><span>EvidenceWriter</span><span>EvidenceVerifier</span><span>ProvenanceResolver</span><span>IntegrityVerifier</span><span>ArtifactAttestor</span><span>OwnershipRegistry</span><span>ReplayVerifier</span></div></section><section class="panel" id="policies"><div class="panel-head"><div><span class="eyebrow">CONTROL INVARIANTS</span><h3>Release assurance</h3></div></div><div class="invariants"><div><b>01</b> One canonical event/evidence model</div><div><b>02</b> No competing execution truth</div><div><b>03</b> Kafka stream ≠ PostgreSQL ledger</div><div><b>04</b> Effectively-once semantics via idempotency</div><div><b>05</b> Generation ≠ verification trust domain</div><div><b>06</b> Immutable/versioned policies</div><div><b>07</b> Digest-addressed artifacts</div><div><b>08</b> Canonical provenance relationships</div><div><b>09</b> Independently verifiable replay</div><div><b>10</b> Secrets never become evidence</div><div><b>11</b> Tenant isolation across evidence pipeline</div><div><b>12</b> Telemetry is non-authoritative</div><div><b>13</b> Explicit cryptographic trust lifecycle</div><div><b>14</b> Interfaces remain contracts</div><div><b>15</b> Verification failure is fail-closed</div></div></section></section></main></div>
+<script src="./app.js"></script></body></html>
