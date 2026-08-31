@@ -3,6 +3,8 @@ import time
 import uuid
 
 from kafka import KafkaConsumer, KafkaProducer
+from kafka.admin import KafkaAdminClient, NewTopic
+from kafka.errors import TopicAlreadyExistsError
 
 
 bootstrap = os.environ["KAFKA_BOOTSTRAP_SERVERS"]
@@ -13,16 +15,21 @@ producer = KafkaProducer(
     bootstrap_servers=bootstrap,
     value_serializer=lambda value: value.encode(),
 )
+admin = KafkaAdminClient(bootstrap_servers=bootstrap, client_id=f"tinyd-ci-admin-{uuid.uuid4().hex}")
 consumer = None
 
 try:
-    # Establish the topic before subscribing so assignment does not depend on
-    # broker-side auto-topic creation racing with consumer metadata discovery.
-    producer.partitions_for(topic)
+    # Explicitly create the unique topic. partitions_for() only discovers
+    # metadata; it does not create a topic and therefore cannot establish it.
+    try:
+        admin.create_topics([NewTopic(name=topic, num_partitions=1, replication_factor=1)])
+    except TopicAlreadyExistsError:
+        pass
+
     topic_ready_deadline = time.monotonic() + 10
-    while producer.partitions_for(topic) is None:
+    while producer.partitions_for(topic) != {0}:
         if time.monotonic() >= topic_ready_deadline:
-            raise AssertionError(f"Kafka topic was not created: {topic}")
+            raise AssertionError(f"Kafka topic was not ready: {topic}")
         time.sleep(0.25)
 
     consumer = KafkaConsumer(
@@ -53,4 +60,5 @@ try:
 finally:
     if consumer is not None:
         consumer.close()
+    admin.close()
     producer.close()
