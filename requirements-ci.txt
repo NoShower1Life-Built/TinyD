@@ -1,2 +1,2 @@
 -r requirements.txt
-kafka-python==2.0.2
+kafka-python==3.0.11
