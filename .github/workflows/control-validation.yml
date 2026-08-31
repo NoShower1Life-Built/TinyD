@@ -2,7 +2,7 @@ name: Control Validation
 
 on:
   push:
-    branches: [main, 'refine/**']
+    branches: [main, 'feat/**', 'refine/**']
   pull_request:
     branches: [main]
 
@@ -21,3 +21,13 @@ jobs:
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
       - name: Generate dependency-aware queue
         run: python3 scripts/plan.py
+      - name: Generate repository-derived scoreboard
+        env:
+          TINYD_SOURCE_REVISION: ${{ github.sha }}
+        run: python3 scripts/scoreboard.py > scoreboard.json
+      - name: Upload scoreboard
+        uses: actions/upload-artifact@v4
+        with:
+          name: tinyd-scoreboard-${{ github.sha }}
+          path: scoreboard.json
+          if-no-files-found: error
