@@ -23,6 +23,8 @@ services:
     environment:
       DATABASE_URL: postgresql://tinyd:${POSTGRES_PASSWORD}@postgres:5432/tinyd
       TINYD_CORS_ORIGINS: ${TINYD_CORS_ORIGINS:-http://127.0.0.1:8080}
+      TINYD_TENANT_SIGNING_KEY: ${TINYD_TENANT_SIGNING_KEY:?TINYD_TENANT_SIGNING_KEY is required}
+      TINYD_DISABLE_API_DOCS: ${TINYD_DISABLE_API_DOCS:-true}
     ports:
       - "127.0.0.1:8000:8000"
     depends_on:
