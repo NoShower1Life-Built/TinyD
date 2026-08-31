@@ -19,17 +19,17 @@ class DownstreamProgressionTests(unittest.TestCase):
             revision = "progression-revision"
 
             queue = replan(tasks, dispatcher, revision)
-            self.assertEqual(queue[0]["id"], "TASK-CONTROL-001")
+            self.assertEqual(queue[0]["taskId"], "TASK-CONTROL-001")
             self.assertEqual(queue[0]["state"], "READY")
 
             dispatcher.dispatch(tasks[0], ["python3", "-c", "print('task-001')"], revision)
             queue = replan(tasks, dispatcher, revision)
-            self.assertEqual(queue[1]["id"], "TASK-CONTROL-002")
+            self.assertEqual(queue[1]["taskId"], "TASK-CONTROL-002")
             self.assertEqual(queue[1]["state"], "READY")
 
             dispatcher.dispatch(tasks[1], ["python3", "-c", "print('task-002')"], revision)
             queue = replan(tasks, dispatcher, revision)
-            self.assertEqual(queue[2]["id"], "TASK-CONTROL-003")
+            self.assertEqual(queue[2]["taskId"], "TASK-CONTROL-003")
             self.assertEqual(queue[2]["state"], "READY")
 
             dispatcher.dispatch(tasks[2], ["python3", "-c", "print('task-003')"], revision)
