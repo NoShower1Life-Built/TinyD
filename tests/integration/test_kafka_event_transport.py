@@ -13,18 +13,27 @@ producer = KafkaProducer(
     bootstrap_servers=bootstrap,
     value_serializer=lambda value: value.encode(),
 )
-consumer = KafkaConsumer(
-    bootstrap_servers=bootstrap,
-    auto_offset_reset="earliest",
-    enable_auto_commit=False,
-    group_id=group_id,
-    value_deserializer=lambda value: value.decode(),
-)
+consumer = None
 
 try:
-    # Subscribe first so the consumer has a chance to join the group and
-    # receive partition assignment before the producer publishes the event.
+    # Establish the topic before subscribing so assignment does not depend on
+    # broker-side auto-topic creation racing with consumer metadata discovery.
+    producer.partitions_for(topic)
+    topic_ready_deadline = time.monotonic() + 10
+    while producer.partitions_for(topic) is None:
+        if time.monotonic() >= topic_ready_deadline:
+            raise AssertionError(f"Kafka topic was not created: {topic}")
+        time.sleep(0.25)
+
+    consumer = KafkaConsumer(
+        bootstrap_servers=bootstrap,
+        auto_offset_reset="earliest",
+        enable_auto_commit=False,
+        group_id=group_id,
+        value_deserializer=lambda value: value.decode(),
+    )
     consumer.subscribe([topic])
+
     assignment_deadline = time.monotonic() + 10
     while not consumer.assignment():
         if time.monotonic() >= assignment_deadline:
@@ -40,7 +49,8 @@ try:
         records = consumer.poll(timeout_ms=250)
         values.extend(message.value for messages in records.values() for message in messages)
 
-    assert expected in values, f"Kafka event not received: expected={expected!r}, values={values!r}"
+    assert values == [expected], f"Kafka event mismatch: expected={[expected]!r}, values={values!r}"
 finally:
-    consumer.close()
+    if consumer is not None:
+        consumer.close()
     producer.close()
