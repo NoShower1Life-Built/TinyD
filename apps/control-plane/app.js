@@ -52,26 +52,25 @@ function renderExecutions(rows) {
 function renderAssurance(projection) {
   const status = projection?.derived_status || 'UNPROVEN';
   setText('assuranceStatus', status);
-  setText('assuranceRequirement', projection?.requirement_id || 'No authoritative requirement loaded');
+  setText('assuranceAuthority', projection?.authoritative_source || 'Authoritative Scoreboard projection');
+  setText('assuranceRequirement', projection?.requirement_id || 'No authoritative requirement exposed');
   setText('assuranceEvidence', projection?.evidence_refs?.length ? `${projection.evidence_refs.length} authoritative evidence reference(s)` : 'No authoritative evidence');
-  setText('assuranceReplay', projection?.replay_verification_ref ? `Recorded verification: ${projection.replay_verification_ref}; independent replay must be established separately` : 'Independent replay not established');
+  setText('assuranceReplay', projection?.replay_verification_ref ? `Recorded verification: ${projection.replay_verification_ref}; independent replay not established by this projection` : 'Independent replay not established');
 }
 async function load() {
   if (!tenantId || !tenantSignature) { connectionState.textContent = 'Context required'; connectionDetail.textContent = 'server-provided tenant assertion required'; runtimeState.textContent = 'CONTEXT REQUIRED'; return; }
   tenantValue.textContent = tenantId; setText('assuranceAuthority', `Authoritative Scoreboard projection · tenant source: ${tenantSource}`);
   try {
-    const [summary, evidence, executions] = await Promise.all([get('/api/v1/assurance/summary'), get('/api/v1/evidence?limit=25'), get('/api/v1/executions?limit=25')]);
+    const [summary, projection, evidence, executions] = await Promise.all([get('/api/v1/assurance/summary'), get('/api/v1/assurance/projection'), get('/api/v1/evidence?limit=25'), get('/api/v1/executions?limit=25')]);
     setText('metricExecutions', summary.execution_count); setText('metricExecutionsDetail', `${executions.length} returned from projection`);
     setText('metricEvidence', summary.evidence_count); setText('metricEvidenceDetail', `${summary.evidence_count} canonical records`);
     setText('metricPolicy', summary.policy_bound_count); setText('metricPolicyDetail', 'policy-bound evidence records');
     setText('metricArtifacts', summary.artifact_count); setText('metricArtifactsDetail', 'artifact-linked evidence records');
     setText('metricReplay', summary.verified_count); setText('metricReplayDetail', `${summary.failed_count} recorded verification failures`);
     setText('metricTenant', 'ENFORCED'); setText('metricTenantDetail', 'tenant-scoped API + PostgreSQL RLS');
-    renderEvidence(evidence); renderExecutions(executions);
+    renderEvidence(evidence); renderExecutions(executions); renderAssurance(projection);
     const execution = executions[0];
     if (execution) { renderAuthorization(await get(`/api/v1/authorization/${encodeURIComponent(execution.execution_id)}`)); renderReplay((await get(`/api/v1/replay/${encodeURIComponent(execution.execution_id)}`)).recorded_verifications || []); }
-    const projection = summary.assurance_projection || summary.projection || null;
-    renderAssurance(projection);
     connectionState.textContent = 'Connected'; connectionDetail.textContent = 'authoritative API boundary'; runtimeState.textContent = 'ASSURANCE CONNECTED';
   } catch (error) { connectionState.textContent = 'Unavailable'; connectionDetail.textContent = error instanceof Error ? error.message : 'request failed'; runtimeState.textContent = 'API UNAVAILABLE'; }
 }
