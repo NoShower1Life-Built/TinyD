@@ -1,0 +1,61 @@
+{
+  "schemaVersion": "1.0.0",
+  "generatedFrom": "repository",
+  "sourceRevision": "generated-from-current-branch-state",
+  "status": "RELEASE_BLOCKED",
+  "truth": {
+    "DEFINED": true,
+    "IMPLEMENTED": false,
+    "TESTED": true,
+    "EXECUTED": false,
+    "EVIDENCED": false,
+    "VERIFIED": false,
+    "CURRENT": false,
+    "RELEASEABLE": false
+  },
+  "controls": {
+    "requirement_exists": true,
+    "implementation_complete": false,
+    "dependencies_satisfied": false,
+    "required_tests_exist": true,
+    "required_tests_pass": false,
+    "execution_exists": false,
+    "evidence_exists": false,
+    "evidence_valid": false,
+    "evidence_matches_source": false,
+    "no_blocking_findings": false
+  },
+  "counts": {
+    "requirements": 3,
+    "tasks": 3,
+    "tests": 3,
+    "requiredTests": 3,
+    "existingTests": 3,
+    "executions": 0,
+    "validEvidence": 0,
+    "verifiedRequirements": 0
+  },
+  "batches": [
+    {"id":"001","title":"Control Model","state":"CLOSED","present":["control/control-model.json","control/requirements.json","control/tasks.json","control/state-machine.json","scripts/control_validate.py","scripts/plan.py"],"missing":[]},
+    {"id":"002","title":"Execution State Machine","state":"PARTIAL","present":["control/state-machine.json"],"missing":[]},
+    {"id":"003","title":"Real Execution Runner","state":"OPEN","present":[],"missing":["execution"]},
+    {"id":"004","title":"Evidence + Verification","state":"OPEN","present":[],"missing":["evidence"]}
+  ],
+  "findings": [
+    {"severity":"CRITICAL","id":"execution_missing","message":"No authoritative execution infrastructure exists."},
+    {"severity":"CRITICAL","id":"evidence_missing","message":"No authoritative evidence ledger exists."},
+    {"severity":"HIGH","id":"source_binding_missing","message":"Evidence is not proven to match the current source revision."},
+    {"severity":"HIGH","id":"blocking_findings","message":"Blocking findings remain unresolved."}
+  ],
+  "workQueue": [
+    {"position":1,"taskId":"TASK-CONTROL-001","priority":0,"state":"READY","dependsOn":[],"blockingReasons":[],"blockers":[],"requirements":["REQ-CONTROL-001","REQ-CONTROL-002","REQ-CONTROL-003"],"title":"Validate canonical control model"},
+    {"position":2,"taskId":"TASK-CONTROL-002","priority":0,"state":"BLOCKED","dependsOn":["TASK-CONTROL-001"],"blockingReasons":["dependency_incomplete"],"blockers":["TASK-CONTROL-001"],"requirements":["REQ-CONTROL-001","REQ-CONTROL-002","REQ-CONTROL-003"],"title":"Execute control-model tests"},
+    {"position":3,"taskId":"TASK-CONTROL-003","priority":1,"state":"BLOCKED","dependsOn":["TASK-CONTROL-002"],"blockingReasons":["dependency_incomplete"],"blockers":["TASK-CONTROL-002"],"requirements":["REQ-CONTROL-002"],"title":"Generate verification evidence"}
+  ],
+  "releaseReasons": [
+    "No authoritative execution infrastructure exists.",
+    "No authoritative evidence ledger exists.",
+    "Evidence is not proven to match the current source revision.",
+    "Blocking findings remain unresolved."
+  ]
+}
