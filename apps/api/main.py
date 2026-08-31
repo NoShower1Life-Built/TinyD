@@ -24,13 +24,7 @@ app = FastAPI(
 
 _allowed_origins = [x.strip() for x in os.getenv("TINYD_CORS_ORIGINS", "").split(",") if x.strip()]
 if _allowed_origins:
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=_allowed_origins,
-        allow_credentials=False,
-        allow_methods=["GET"],
-        allow_headers=["X-TinyD-Tenant-ID", "X-TinyD-Tenant-Signature"],
-    )
+    app.add_middleware(CORSMiddleware, allow_origins=_allowed_origins, allow_credentials=False, allow_methods=["GET"], allow_headers=["X-TinyD-Tenant-ID", "X-TinyD-Tenant-Signature"])
 
 
 @app.middleware("http")
@@ -44,9 +38,7 @@ async def security_headers(request, call_next):
 
 
 def tenant(value: str | None, signature: str | None) -> str:
-    if not value or len(value) > 128 or value.strip() != value:
-        raise HTTPException(401, "tenant authentication required")
-    if not signature or len(signature) != 64:
+    if not value or len(value) > 128 or value.strip() != value or not signature or len(signature) != 64:
         raise HTTPException(401, "tenant authentication required")
     expected = hmac.new(_AUTH_KEY.encode(), value.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature.lower(), expected):
@@ -142,10 +134,11 @@ def artifact(digest: str, x_tinyd_tenant_id: str | None = Header(default=None), 
     t = auth(x_tinyd_tenant_id, x_tinyd_tenant_signature)
     if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
         raise HTTPException(400, "invalid SHA-256 digest")
-    evidence = query("SELECT evidence_id, execution_id, artifact_digest, code_digest, policy_version, created_at FROM evidence_ledger WHERE tenant_id=%s AND artifact_digest=%s ORDER BY created_at DESC", (t, digest.lower()))
+    digest = digest.lower()
+    evidence = query("SELECT evidence_id, execution_id, artifact_digest, code_digest, policy_version, created_at FROM evidence_ledger WHERE tenant_id=%s AND artifact_digest=%s ORDER BY created_at DESC", (t, digest))
     if not evidence:
         raise HTTPException(404, "artifact evidence not found")
-    return {"artifact_digest": digest.lower(), "evidence": evidence}
+    return {"artifact_digest": digest, "evidence": evidence}
 
 
 @app.get("/api/v1/replay/{execution_id}")
@@ -158,7 +151,7 @@ def replay(execution_id: str, x_tinyd_tenant_id: str | None = Header(default=Non
 @app.get("/api/v1/policies")
 def policies(x_tinyd_tenant_id: str | None = Header(default=None), x_tinyd_tenant_signature: str | None = Header(default=None), limit: int = Query(100, ge=1, le=500)):
     t = auth(x_tinyd_tenant_id, x_tinyd_tenant_signature)
-    return query("SELECT policy_id, version, policy_digest, policy_json, created_at FROM policy_versions WHERE tenant_id=%s ORDER BY created_at DESC LIMIT %s", (t, limit))
+    return query("SELECT policy_id, version, policy_digest, created_at FROM policy_versions WHERE tenant_id=%s ORDER BY created_at DESC LIMIT %s", (t, limit))
 
 
 @app.get("/api/v1/audit")
