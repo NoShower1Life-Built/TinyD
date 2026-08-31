@@ -1,6 +1,6 @@
 """Deterministic Scoreboard assurance projection.
 
-This module is a projection only: it does not create execution truth.  Callers
+This module is a projection only: it does not create execution truth. Callers
 must supply authoritative event/evidence/verification records.
 """
 from __future__ import annotations
@@ -47,6 +47,7 @@ class AssuranceProjection:
 
 
 def _same_tenant(records: Iterable[Mapping[str, object]], tenant_id: str) -> bool:
+    """Require explicit tenant identity on every authoritative record."""
     return all(record.get("tenant_id") == tenant_id for record in records)
 
 
@@ -65,7 +66,7 @@ def derive_status(
 ) -> AssuranceStatus:
     """Derive status without mutating or trusting the projection itself."""
     now = now or datetime.now(timezone.utc)
-    records = [r for r in [implementation, test, execution, replay, trust_root] if r]
+    records = [r for r in [implementation, test, execution, replay, trust_root] if r is not None]
     records.extend(evidence)
     records.extend(provenance)
     records.extend(verification)
