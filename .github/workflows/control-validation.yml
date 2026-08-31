@@ -16,18 +16,57 @@ jobs:
   control:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
+      - name: Checkout exact workflow commit
         uses: actions/checkout@v5
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 1
+
+      - name: Assert checkout provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected='${{ github.sha }}'
+          actual="$(git rev-parse HEAD)"
+          test -n "$expected"
+          test "$actual" = "$expected"
+          echo "GITHUB_SHA=$expected"
+          echo "git rev-parse HEAD=$actual"
+
       - name: Validate control model
         run: python3 scripts/control_validate.py
+
       - name: Run executable control tests
         run: python3 -m unittest discover -s tests -p 'test_*.py' -v
+
       - name: Generate dependency-aware queue
         run: python3 scripts/plan.py
+
       - name: Generate repository-derived scoreboard
         env:
           TINYD_SOURCE_REVISION: ${{ github.sha }}
-        run: python3 scripts/scoreboard.py > scoreboard.json
+        run: |
+          set -euo pipefail
+          test "$TINYD_SOURCE_REVISION" = "$(git rev-parse HEAD)"
+          python3 scripts/scoreboard.py > scoreboard.json
+
+      - name: Assert scoreboard provenance
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s scoreboard.json
+          python3 - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          expected = os.environ["GITHUB_SHA"]
+          scoreboard = json.loads(Path("scoreboard.json").read_text())
+          actual = scoreboard.get("sourceRevision") or scoreboard.get("source_revision")
+          if actual != expected:
+              raise SystemExit(f"scoreboard revision mismatch: expected {expected}, got {actual}")
+          PY
+
       - name: Upload scoreboard
         uses: actions/upload-artifact@v6
         with:
