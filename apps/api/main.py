@@ -11,16 +11,10 @@ import psycopg
 from psycopg.rows import dict_row
 
 _AUTH_KEY = os.getenv("TINYD_TENANT_SIGNING_KEY")
-if not _AUTH_KEY:
-    raise RuntimeError("TINYD_TENANT_SIGNING_KEY is required; tenant authentication is fail-closed")
+if not _AUTH_KEY or len(_AUTH_KEY.encode()) < 32:
+    raise RuntimeError("TINYD_TENANT_SIGNING_KEY must contain at least 32 bytes; tenant authentication is fail-closed")
 
-app = FastAPI(
-    title="TinyD API",
-    version="1.1",
-    docs_url=None if os.getenv("TINYD_DISABLE_API_DOCS", "true").lower() == "true" else "/docs",
-    redoc_url=None,
-    openapi_url=None if os.getenv("TINYD_DISABLE_API_DOCS", "true").lower() == "true" else "/openapi.json",
-)
+app = FastAPI(title="TinyD API", version="1.1", docs_url=None if os.getenv("TINYD_DISABLE_API_DOCS", "true").lower() == "true" else "/docs", redoc_url=None, openapi_url=None if os.getenv("TINYD_DISABLE_API_DOCS", "true").lower() == "true" else "/openapi.json")
 
 _allowed_origins = [x.strip() for x in os.getenv("TINYD_CORS_ORIGINS", "").split(",") if x.strip()]
 if _allowed_origins:
@@ -132,9 +126,9 @@ def authorization(execution_id: str, x_tinyd_tenant_id: str | None = Header(defa
 @app.get("/api/v1/artifacts/{digest}")
 def artifact(digest: str, x_tinyd_tenant_id: str | None = Header(default=None), x_tinyd_tenant_signature: str | None = Header(default=None)):
     t = auth(x_tinyd_tenant_id, x_tinyd_tenant_signature)
-    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest.lower()):
-        raise HTTPException(400, "invalid SHA-256 digest")
     digest = digest.lower()
+    if len(digest) != 64 or any(c not in "0123456789abcdef" for c in digest):
+        raise HTTPException(400, "invalid SHA-256 digest")
     evidence = query("SELECT evidence_id, execution_id, artifact_digest, code_digest, policy_version, created_at FROM evidence_ledger WHERE tenant_id=%s AND artifact_digest=%s ORDER BY created_at DESC", (t, digest))
     if not evidence:
         raise HTTPException(404, "artifact evidence not found")
