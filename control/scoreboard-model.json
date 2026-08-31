@@ -1,39 +1,14 @@
 {
-  "version": "1.0.0",
-  "title": "TinyD Control Loop Scoreboard",
-  "truthLevels": [
-    "DEFINED",
-    "IMPLEMENTED",
-    "TESTED",
-    "EXECUTED",
-    "EVIDENCED",
-    "VERIFIED",
-    "CURRENT",
-    "RELEASEABLE"
-  ],
-  "batches": [
-    {"id":"001","title":"Control Model","requiredPaths":["control/control-model.json","control/requirements.json","control/tasks.json","control/state-machine.json","scripts/control_validate.py","scripts/plan.py"],"closeWhen":"all_exist"},
+  "version":"1.1.0",
+  "title":"TinyD Control Loop Scoreboard",
+  "truthLevels":["DEFINED","IMPLEMENTED","TESTED","EXECUTED","EVIDENCED","VERIFIED","CURRENT","RELEASEABLE"],
+  "batches":[
+    {"id":"001","title":"Control Model","requiredPaths":["control/control-model.json","control/requirements.json","control/tasks.json","control/state-machine.json","scripts/control_validate.py","scripts/plan.py"],"closeWhen":"control_validation_passes"},
     {"id":"002","title":"Execution State Machine","requiredPaths":["control/state-machine.json"],"closeWhen":"runtime_enforced"},
-    {"id":"003","title":"Real Execution Runner","requiredPaths":["execution"],"closeWhen":"all_exist"},
-    {"id":"004","title":"Evidence + Verification","requiredPaths":["evidence"],"closeWhen":"all_exist"}
+    {"id":"003","title":"Real Execution Runner","requiredPaths":["execution"],"closeWhen":"execution_runtime_exists"},
+    {"id":"004","title":"Evidence + Verification","requiredPaths":["evidence"],"closeWhen":"evidence_runtime_exists"}
   ],
-  "requiredControls": [
-    "requirement_exists",
-    "implementation_complete",
-    "dependencies_satisfied",
-    "required_tests_exist",
-    "required_tests_pass",
-    "execution_exists",
-    "evidence_exists",
-    "evidence_valid",
-    "evidence_matches_source",
-    "no_blocking_findings"
-  ],
-  "releaseRequires": [
-    "all_required_requirements_verified",
-    "all_required_tests_pass",
-    "required_evidence_valid",
-    "no_blocking_findings",
-    "current_source_proven"
-  ]
+  "requiredControls":["requirement_exists","implementation_complete","dependencies_satisfied","required_tests_exist","required_tests_pass","execution_exists","evidence_exists","evidence_valid","evidence_matches_source","no_blocking_findings"],
+  "releaseRequires":["all_required_requirements_verified","all_required_tests_pass","required_evidence_valid","no_blocking_findings","current_source_proven"],
+  "failClosed":true
 }
