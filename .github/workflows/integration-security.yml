@@ -122,6 +122,7 @@ jobs:
         run: python tests/integration/test_postgres_evidence_replay.py
       - name: Validate assurance boundary contracts
         env:
+          DATABASE_URL: postgresql://tinyd_app:ci-app-only@127.0.0.1:5432/tinyd
           TEST_TENANT_ID: ${{ env.TEST_ASSURANCE_TENANT_ID }}
         run: python tests/integration/test_assurance_boundaries.py
       - name: Exercise real Kafka event transport
