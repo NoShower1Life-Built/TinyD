@@ -65,6 +65,76 @@ jobs:
           python-version: "3.12"
       - name: Install CI dependencies
         run: python -m pip install --upgrade pip && python -m pip install -r requirements-ci.txt
+      - name: Generate and validate repository SBOM
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm -rf sbom
+          mkdir -p sbom
+          docker run --rm \
+            -v "$GITHUB_WORKSPACE:/src:ro" \
+            ghcr.io/anchore/syft@sha256:94b4774193a36d4fb9f8c27d5423c153b600791b12a6925e8730d8338a334953 \
+            dir:/src -o spdx-json=/src/sbom/tinyd.spdx.json
+          python - <<'PY'
+          import json
+          from pathlib import Path
+
+          path = Path("sbom/tinyd.spdx.json")
+          document = json.loads(path.read_text(encoding="utf-8"))
+          required = ("spdxVersion", "dataLicense", "SPDXID", "name", "documentNamespace", "creationInfo", "packages")
+          missing = [key for key in required if key not in document]
+          if missing:
+              raise SystemExit(f"SBOM missing required SPDX fields: {missing}")
+          if not isinstance(document["packages"], list):
+              raise SystemExit("SBOM packages must be an array")
+          if not document["packages"]:
+              raise SystemExit("SBOM contains no packages")
+          PY
+          git archive --format=tar --prefix=tinyd/ HEAD | sha256sum | awk '{print $1}' > sbom/source-tree.sha256
+          sha256sum sbom/tinyd.spdx.json > sbom/tinyd.spdx.json.sha256
+          python - <<'PY'
+          import json
+          import os
+          from pathlib import Path
+
+          sbom = Path("sbom/tinyd.spdx.json")
+          sbom_sha = Path("sbom/tinyd.spdx.json.sha256").read_text(encoding="utf-8").split()[0]
+          source_sha = Path("sbom/source-tree.sha256").read_text(encoding="utf-8").strip()
+          attestation = {
+              "schema": "tinyd.sbom-attestation.v1",
+              "repository": "NoShower1Life-Built/TinyD",
+              "commit": os.environ["GITHUB_SHA"],
+              "source_tree_sha256": source_sha,
+              "sbom_path": str(sbom),
+              "sbom_sha256": sbom_sha,
+              "format": "SPDX-2.3-json",
+              "generator": "anchore/syft",
+              "generator_image": "ghcr.io/anchore/syft@sha256:94b4774193a36d4fb9f8c27d5423c153b600791b12a6925e8730d8338a334953",
+          }
+          Path("sbom/tinyd.sbom-attestation.json").write_text(json.dumps(attestation, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+          PY
+          sha256sum sbom/tinyd.sbom-attestation.json > sbom/tinyd.sbom-attestation.json.sha256
+      - name: Preserve digest-bound SBOM evidence
+        id: upload-sbom
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: tinyd-sbom-${{ github.sha }}
+          path: sbom/
+          if-no-files-found: error
+      - name: Record SBOM artifact digest
+        env:
+          ARTIFACT_DIGEST: ${{ steps.upload-sbom.outputs.artifact-digest }}
+        run: |
+          set -euo pipefail
+          test -n "$ARTIFACT_DIGEST"
+          {
+            echo '### SBOM evidence'
+            echo
+            echo "Artifact SHA-256: \`$ARTIFACT_DIGEST\`"
+            echo "SBOM SHA-256: \`$(cut -d' ' -f1 sbom/tinyd.spdx.json.sha256)\`"
+            echo "Source tree SHA-256: \`$(cat sbom/source-tree.sha256)\`"
+            echo "Commit: \`${GITHUB_SHA}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
       - name: Wait for PostgreSQL and Kafka
         shell: bash
         run: |
