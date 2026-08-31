@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from evidence import EvidenceLedger, EvidenceRecord
-from execution import ExecutionLedger, ExecutionRunner, ExecutionState
+from execution import ExecutionLedger, ExecutionState, ExecutionWorker
 
 
 class TaskDispatcher:
@@ -12,15 +12,14 @@ class TaskDispatcher:
         self.root = root.resolve()
         self.executions = ExecutionLedger(execution_db)
         self.evidence = EvidenceLedger(evidence_path)
-        self.runner = ExecutionRunner(self.root)
+        self.worker = ExecutionWorker(self.executions, self.root)
 
     def dispatch(self, task: dict, command: list[str], source_revision: str) -> dict:
         task_id = task["id"]
         dependencies = task.get("dependsOn", [])
         if any(not self.executions.for_task(dep, source_revision) or self.executions.for_task(dep, source_revision)[-1].state is not ExecutionState.SUCCEEDED for dep in dependencies):
             raise RuntimeError(f"task {task_id} has incomplete dependencies")
-        execution = self.runner.run(task_id, command, source_revision)
-        self.executions.put(execution)
+        execution = self.worker.execute(task_id, command, source_revision)
         if execution.state is ExecutionState.SUCCEEDED:
             payload = {"result": "pass", "taskId": task_id, "exitCode": execution.exit_code, "executionId": execution.execution_id}
             evidence_id = self.evidence.evidence_id(task.get("requirements", [task_id])[0], execution.execution_id, source_revision, payload)
