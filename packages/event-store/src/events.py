@@ -1,19 +1,28 @@
 """Canonical TinyD event/evidence primitives."""
 from __future__ import annotations
-
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-import hashlib
-import json
+import hashlib, json, re
 from typing import Any, Mapping
 
-SENSITIVE_KEYS = frozenset({"password", "secret", "token", "api_key", "apikey", "private_key", "credential"})
+SENSITIVE_KEYS = frozenset({
+    "password", "passwd", "secret", "token", "access_token", "refresh_token", "api_key", "apikey",
+    "client_secret", "private_key", "credential", "credentials", "authorization", "proxy_authorization",
+    "cookie", "set_cookie", "session", "session_id"
+})
+_SECRET_KEY_RE = re.compile(r"(?:^|[_-])(pass(word)?|secret|token|api[-_]?key|private[-_]?key|credential)(?:$|[_-])", re.I)
 
 
 def contains_sensitive(value: Any) -> bool:
     if isinstance(value, Mapping):
-        return any(str(k).lower() in SENSITIVE_KEYS or contains_sensitive(v) for k, v in value.items())
-    if isinstance(value, (list, tuple)):
+        for key, child in value.items():
+            name = str(key).strip().lower().replace(" ", "_")
+            if name in SENSITIVE_KEYS or _SECRET_KEY_RE.search(name):
+                return True
+            if contains_sensitive(child):
+                return True
+        return False
+    if isinstance(value, (list, tuple, set)):
         return any(contains_sensitive(v) for v in value)
     return False
 
