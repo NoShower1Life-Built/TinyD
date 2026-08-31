@@ -1,0 +1,9 @@
+{
+  "version":"1.0.0",
+  "state":"DISPATCHED",
+  "states":["DISPATCHED","RUNNING","SUCCEEDED","FAILED","TIMED_OUT","CANCELLED"],
+  "terminalStates":["SUCCEEDED","FAILED","TIMED_OUT","CANCELLED"],
+  "requiredFields":["executionId","taskId","sourceRevision","state"],
+  "deterministicIdentity":"sha256(taskId:sourceRevision)",
+  "terminalRequiresFinishedAt":true
+}
