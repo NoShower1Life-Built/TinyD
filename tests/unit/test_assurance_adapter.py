@@ -45,3 +45,23 @@ def test_authoritative_missing_replay_cannot_become_proven():
 
     result = AssuranceProjectionAdapter(missing_replay).project(REQ, now=NOW)
     assert result.derived_status is AssuranceStatus.UNPROVEN
+
+
+def test_adapter_rejects_missing_top_level_tenant():
+    def missing_tenant(tenant, requirement):
+        data = source(tenant, requirement)
+        del data["tenant_id"]
+        return data
+
+    with pytest.raises(ProjectionSourceError):
+        AssuranceProjectionAdapter(missing_tenant).project(REQ, now=NOW)
+
+
+def test_projection_rejects_missing_nested_tenant():
+    def missing_nested_tenant(tenant, requirement):
+        data = source(tenant, requirement)
+        del data["evidence"][0]["tenant_id"]
+        return data
+
+    result = AssuranceProjectionAdapter(missing_nested_tenant).project(REQ, now=NOW)
+    assert result.derived_status is AssuranceStatus.FAILED
