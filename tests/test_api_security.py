@@ -3,13 +3,13 @@ import hmac
 import importlib
 import os
 
-os.environ.setdefault("TINYD_TENANT_SIGNING_KEY", "test-only-signing-key")
-
+_TEST_KEY = "ci-only-test-key-0123456789-abcdef"
+os.environ.setdefault("TINYD_TENANT_SIGNING_KEY", _TEST_KEY)
 api = importlib.import_module("apps.api.main")
 
 
 def signature(tenant: str) -> str:
-    return hmac.new(b"test-only-signing-key", tenant.encode(), hashlib.sha256).hexdigest()
+    return hmac.new(_TEST_KEY.encode(), tenant.encode(), hashlib.sha256).hexdigest()
 
 
 def test_tenant_signature_is_required():
