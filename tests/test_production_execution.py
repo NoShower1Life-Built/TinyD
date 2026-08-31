@@ -1,4 +1,3 @@
-import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -6,7 +5,7 @@ import time
 import unittest
 from pathlib import Path
 
-from execution import ExecutionLedger, ExecutionState, ExecutionWorker
+from execution import ExecutionLedger, ExecutionRecord, ExecutionState, ExecutionWorker
 
 
 class ProductionExecutionTests(unittest.TestCase):
@@ -29,7 +28,7 @@ class ProductionExecutionTests(unittest.TestCase):
             ledger = ExecutionLedger(root / "execution.db")
             execution_id = "exec-recovery"
             self.assertTrue(ledger.acquire_lease(execution_id, "TASK-RECOVER", "rev-1", "dead-worker", 1))
-            ledger.put(__import__("execution").ExecutionRecord(execution_id, "TASK-RECOVER", "rev-1", ExecutionState.RUNNING, metadata={"workerId": "dead-worker"}))
+            ledger.put(ExecutionRecord(execution_id, "TASK-RECOVER", "rev-1", ExecutionState.RUNNING, metadata={"workerId": "dead-worker"}))
             time.sleep(1.1)
 
             recovered = ledger.recover_expired()
