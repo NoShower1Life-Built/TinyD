@@ -2,7 +2,7 @@ name: TinyD CI
 
 on:
   push:
-    branches: [main, tinyd-v1.0-scaffold]
+    branches: [main, tinyd-v1.0-scaffold, feat/scoreboard-assurance-v1]
   pull_request:
     branches: [main]
 
@@ -11,5 +11,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Repository validation
-        run: echo "TinyD v1.0 validation pipeline initialized"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install runtime and test dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -e '.[test]'
+      - name: Compile source
+        run: python -m compileall -q apps packages tests
+      - name: Execute tests
+        run: python -m pytest -q
