@@ -9,6 +9,11 @@ on:
 permissions:
   contents: read
 
+env:
+  TEST_RLS_TENANT_ID: ci-rls-tenant
+  TEST_EVIDENCE_TENANT_ID: ci-evidence-tenant
+  TEST_ASSURANCE_TENANT_ID: ci-assurance-tenant
+
 jobs:
   integration-security:
     runs-on: ubuntu-latest
@@ -106,13 +111,18 @@ jobs:
           GRANT USAGE ON SCHEMA public TO tinyd_app;
           GRANT SELECT, INSERT ON evidence_ledger TO tinyd_app;
           SQL
-      - name: Exercise tenant RLS
+      - name: Exercise tenant RLS and missing tenant context
         env:
           RLS_DATABASE_URL: postgresql://tinyd_app:ci-app-only@127.0.0.1:5432/tinyd
+          TEST_TENANT_ID: ${{ env.TEST_RLS_TENANT_ID }}
         run: python tests/integration/test_postgres_rls.py
       - name: Validate evidence hash chain and recorded replay verification
+        env:
+          TEST_TENANT_ID: ${{ env.TEST_EVIDENCE_TENANT_ID }}
         run: python tests/integration/test_postgres_evidence_replay.py
       - name: Validate assurance boundary contracts
+        env:
+          TEST_TENANT_ID: ${{ env.TEST_ASSURANCE_TENANT_ID }}
         run: python tests/integration/test_assurance_boundaries.py
       - name: Exercise real Kafka event transport
         run: python tests/integration/test_kafka_event_transport.py
