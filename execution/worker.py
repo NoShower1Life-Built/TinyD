@@ -23,16 +23,18 @@ class ExecutionWorker:
 
     def execute(self, task_id: str, command: Sequence[str], source_revision: str) -> ExecutionRecord:
         execution_id = self.runner._execution_id(task_id, source_revision)
+        existing = self.ledger.get(execution_id)
+        if existing is not None and existing.state is ExecutionState.SUCCEEDED:
+            return existing
         if not self.ledger.acquire_lease(execution_id, task_id, source_revision, self.worker_id, self.lease_seconds):
             existing = self.ledger.get(execution_id)
             if existing is not None:
                 return existing
             raise RuntimeError(f"execution {execution_id} could not acquire lease")
 
-        started_at = self._now()
         running = ExecutionRecord(
             execution_id, task_id, source_revision, ExecutionState.RUNNING,
-            started_at=started_at, metadata={"workerId": self.worker_id},
+            started_at=self._now(), metadata={"workerId": self.worker_id},
         )
         self.ledger.put(running)
         try:
@@ -48,7 +50,6 @@ class ExecutionWorker:
             self.ledger.release_lease(execution_id, self.worker_id)
             return result
         except BaseException:
-            # Deliberately leave the RUNNING record and lease durable so recovery can reconcile it.
             raise
 
     @staticmethod
