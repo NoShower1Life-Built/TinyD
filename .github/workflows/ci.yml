@@ -9,6 +9,9 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      TINYD_TENANT_SIGNING_KEY: ci-only-test-key-not-a-secret
+      TINYD_DISABLE_API_DOCS: "true"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
