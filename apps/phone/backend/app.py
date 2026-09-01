@@ -5,6 +5,7 @@ import re
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import Response
 from twilio.jwt.access_token import AccessToken
 from twilio.jwt.access_token.grants import VoiceGrant
@@ -12,6 +13,13 @@ from twilio.request_validator import RequestValidator
 from twilio.twiml.voice_response import Dial, VoiceResponse
 
 app = FastAPI(title="TinyD Phone Calling API", version="0.1.0")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[origin for origin in os.getenv("PHONE_ALLOWED_ORIGINS", "http://localhost:8088").split(",") if origin],
+    allow_credentials=False,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type", "X-Twilio-Signature"],
+)
 E164 = re.compile(r"^\+[1-9]\d{7,14}$")
 
 
@@ -68,14 +76,10 @@ async def incoming(request: Request, x_twilio_signature: str | None = Header(def
     params = {str(k): str(v) for k, v in form.items()}
     validate_twilio_request(str(request.url), params, x_twilio_signature)
     response = VoiceResponse()
-    identity = params.get("To", "").removeprefix("client:")
-    if identity:
-        dial = Dial(answer_on_bridge=True)
-        dial.client(identity)
-        response.append(dial)
-    else:
-        response.say("This number is not configured for an application user.")
-        response.hangup()
+    identity = env("DEFAULT_INCOMING_IDENTITY")
+    dial = Dial(answer_on_bridge=True)
+    dial.client(identity)
+    response.append(dial)
     return Response(str(response), media_type="application/xml")
 
 
