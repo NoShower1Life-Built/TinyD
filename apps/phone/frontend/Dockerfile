@@ -2,7 +2,7 @@ FROM node:22-alpine AS build
 WORKDIR /app
 ARG VITE_PHONE_API=http://localhost:8080
 ENV VITE_PHONE_API=$VITE_PHONE_API
-COPY package.json .
+COPY package.json tsconfig.json vite.config.ts ./
 RUN npm install
 COPY index.html .
 COPY src ./src
