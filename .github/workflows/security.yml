@@ -32,7 +32,9 @@ jobs:
           python -m pip install -e '.[test]'
           python -m pip install 'pip-audit>=2.7,<3'
       - name: Audit installed third-party dependencies
-        run: python -m pip_audit --strict --skip-editable
+        run: |
+          python -m pip freeze --exclude-editable > /tmp/tinyd-audit-requirements.txt
+          python -m pip_audit --strict -r /tmp/tinyd-audit-requirements.txt
 
   source-integrity:
     name: Source integrity checks
