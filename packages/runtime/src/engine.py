@@ -8,6 +8,10 @@ class RuntimeEngine:
 
     state: dict[str, Any] = field(default_factory=dict)
 
+    @staticmethod
+    def _semantic_event(event: dict[str, Any]) -> dict[str, Any]:
+        return {key: value for key, value in event.items() if key != "timestamp"}
+
     def execute(self, event: dict[str, Any]) -> dict[str, Any]:
         event_id = event.get("id")
         if not isinstance(event_id, str) or not event_id:
@@ -16,7 +20,7 @@ class RuntimeEngine:
         if existing is None:
             self.state[event_id] = dict(event)
             return {"status": "accepted", "event_id": event_id}
-        if existing != event:
+        if self._semantic_event(existing) != self._semantic_event(event):
             raise ValueError(f"event id collision: {event_id}")
         return {"status": "accepted", "event_id": event_id, "idempotent": True}
 
