@@ -1,23 +1,20 @@
-const products=[
- {name:'Deterministic Research Agent',type:'Agents',icon:'R',desc:'Evidence-first research agent with replay-safe tool execution.',version:'2.4.1',rating:'4.9',installs:'18.4k',price:'Free'},
- {name:'Incident Response DAG',type:'Workflows',icon:'IR',desc:'Verified triage, containment, and post-incident workflow.',version:'1.8.0',rating:'4.8',installs:'9.7k',price:'$19/mo'},
- {name:'Postgres Snapshot Tool',type:'Tools',icon:'PG',desc:'Consistent snapshots with deterministic manifests and restore checks.',version:'3.1.2',rating:'5.0',installs:'7.2k',price:'Free'},
- {name:'Kafka Event Connector',type:'Connectors',icon:'K',desc:'Typed Kafka ingress and egress for TinyD event streams.',version:'2.0.4',rating:'4.9',installs:'14.1k',price:'Free'},
- {name:'OpenAI Gateway',type:'Connectors',icon:'AI',desc:'OpenAI-compatible gateway with tenant policy and usage metering.',version:'1.6.3',rating:'4.7',installs:'21.8k',price:'$29/mo'},
- {name:'VCIR Policy Pack',type:'Policies',icon:'V',desc:'Proof obligations and admission policies for verified execution.',version:'0.9.5',rating:'4.9',installs:'5.3k',price:'$49/mo'}
-];
-const state={filter:'All',query:'',sort:'featured'};
+const API_BASE = window.TINYD_API_URL || '/';
+const state = {filter:'All',query:'',sort:'featured',packages:[],token:localStorage.getItem('tinyd_marketplace_token')||''};
 const $=s=>document.querySelector(s); const $$=s=>[...document.querySelectorAll(s)];
-function render(){let items=products.filter(p=>(state.filter==='All'||p.type===state.filter)&&(`${p.name} ${p.type} ${p.desc}`).toLowerCase().includes(state.query.toLowerCase()));if(state.sort==='rating')items.sort((a,b)=>b.rating-a.rating);if(state.sort==='newest')items.sort((a,b)=>b.version.localeCompare(a.version));$('#products').innerHTML=items.map(p=>`<article class="card"><div class="card-top"><div class="logo">${p.icon}</div><span class="verified">✓ VERIFIED</span></div><h3>${p.name}</h3><p>${p.desc}</p><div class="meta"><span>${p.type}</span><span>v${p.version}</span><span>★ ${p.rating}</span><span>${p.installs}</span><span class="price">${p.price}</span></div></article>`).join('')||'<div class="card"><h3>No packages found</h3><p>Try another search or category.</p></div>';}
-function setFilter(f){state.filter=f;$$('[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter===f));render();$('#featured').scrollIntoView({behavior:'smooth',block:'start'});}
+async function request(path, options={}){const headers={'content-type':'application/json',...(options.headers||{})};if(state.token)headers.authorization=`Bearer ${state.token}`;const r=await fetch(new URL(path.replace(/^\//,''),new URL(API_BASE,location.href)),{...options,headers});if(!r.ok)throw new Error((await r.text())||`HTTP ${r.status}`);return r.json()}
+function setFilter(f){state.filter=f;$$('[data-filter]').forEach(b=>b.classList.toggle('active',b.dataset.filter===f));render()}
+function filtered(){let items=state.packages.filter(p=>(state.filter==='All'||p.type===state.filter)&&JSON.stringify(p).toLowerCase().includes(state.query.toLowerCase()));if(state.sort==='rating')items.sort((a,b)=>(b.rating||0)-(a.rating||0));if(state.sort==='newest')items.sort((a,b)=>String(b.version).localeCompare(String(a.version)));return items}
+function render(){const items=filtered();$('#products').innerHTML=items.map(p=>`<article class="card"><div class="card-top"><div class="logo">${(p.name||p.id).slice(0,2).toUpperCase()}</div><span class="verified">${p.verification?.status==='verified'?'✓ VERIFIED':'PENDING'}</span></div><h3>${p.name}</h3><p>${p.description||''}</p><div class="meta"><span>${p.type}</span><span>v${p.version}</span><span>${p.verification?.method||'unverified'}</span><button class="outline install" data-id="${p.id}" data-version="${p.version}">Install</button></div></article>`).join('')||'<div class="card"><h3>No packages found</h3><p>Adjust your search or category.</p></div>';$$('.install').forEach(b=>b.addEventListener('click',()=>install(b.dataset.id,b.dataset.version)))}
+async function load(){try{const r=await request(`v1/marketplace/packages?query=${encodeURIComponent(state.query)}&category=${encodeURIComponent(state.filter==='All'?'':state.filter)}`,{headers:{'cache-control':'no-cache'}});state.packages=r.packages;render()}catch(e){$('#products').innerHTML=`<div class="card"><h3>Marketplace API unavailable</h3><p>${e.message}</p></div>`}}
+async function install(id,version){if(!state.token){state.token=prompt('TinyD tenant bearer token');if(!state.token)return;localStorage.setItem('tinyd_marketplace_token',state.token)}try{await request(`v1/marketplace/packages/${encodeURIComponent(id)}/install?version=${encodeURIComponent(version)}`,{method:'POST'});alert('Package installed for the authenticated tenant.')}catch(e){if(e.message.includes('401')){localStorage.removeItem('tinyd_marketplace_token');state.token=''}alert(`Installation failed: ${e.message}`)}}
 $$('[data-filter]').forEach(b=>b.addEventListener('click',()=>setFilter(b.dataset.filter)));
-$('#search').addEventListener('input',e=>{state.query=e.target.value;render()});
+$('#search').addEventListener('input',e=>{state.query=e.target.value;load()});
 $('#sort').addEventListener('change',e=>{state.sort=e.target.value;render()});
 $$('.view').forEach(b=>b.addEventListener('click',()=>{$$('.view').forEach(x=>x.classList.remove('active'));b.classList.add('active');$('#products').classList.toggle('list',b.dataset.view==='list')}));
 $('#allCategories').addEventListener('click',()=>setFilter('All'));
 $('#themeBtn').addEventListener('click',()=>document.body.classList.toggle('light'));
-$('#dashboardBtn').addEventListener('click',()=>alert('Developer dashboard integration is ready for the TinyD control-plane route.'));
-['publishTop','publishCta'].forEach(id=>$( '#'+id).addEventListener('click',()=>$('#publish').scrollIntoView({behavior:'smooth'})));
-$('#docsBtn').addEventListener('click',()=>alert('Publishing guide: manifest → contract → verification → package → publish.'));
+$('#dashboardBtn').addEventListener('click',()=>location.href='../control-plane/');
+['publishTop','publishCta'].forEach(id=>$('#'+id)?.addEventListener('click',()=>alert('Publishing requires a signed TinyD package manifest and verification result.')));
+$('#docsBtn').addEventListener('click',()=>alert('Publishing: manifest → contract → verification → registry → tenant installation.'));
 document.addEventListener('keydown',e=>{if(e.key==='/'&&document.activeElement.tagName!=='INPUT'){e.preventDefault();$('#search').focus()}});
-render();
+load();
