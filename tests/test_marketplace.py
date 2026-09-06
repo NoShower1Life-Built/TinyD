@@ -78,7 +78,19 @@ def test_webhook_signature_accepts_valid_payload_and_rejects_tampering(monkeypat
     except RuntimeError as exc:
         assert "invalid Stripe webhook signature" in str(exc)
     else:
-        raise AssertionError("tampered webhook payload was accepted")
+        raise AssertionError("tampered payload was accepted")
+
+
+def test_webhook_rejects_malformed_signature(monkeypatch):
+    monkeypatch.setenv("STRIPE_WEBHOOK_SECRET", "whsec_test")
+    payload = b'{"id":"evt_test"}'
+    for signature in ("t=not-a-timestamp,v1=bad", "v1=bad", "t=123"):
+        try:
+            verify_webhook_signature(payload, signature)
+        except RuntimeError:
+            pass
+        else:
+            raise AssertionError("malformed signature was accepted")
 
 
 def test_webhook_endpoint_requires_valid_signature(monkeypatch):
