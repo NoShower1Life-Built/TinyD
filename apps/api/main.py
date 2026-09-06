@@ -16,17 +16,21 @@ from packages.runtime.src.engine import RuntimeEngine
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
 engine = RuntimeEngine()
 
+
 class WorkflowRun(BaseModel):
     workflow: str = Field(min_length=1, max_length=200)
     payload: dict[str, Any] = Field(default_factory=dict)
 
+
 class ReplayRequest(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
+
 
 class UsageRequest(BaseModel):
     package_id: str = Field(min_length=1, max_length=200)
     quantity: int = Field(gt=0, le=1_000_000)
     unit: str = Field(min_length=1, max_length=50)
+
 
 class CheckoutRequest(BaseModel):
     package_id: str
@@ -34,35 +38,47 @@ class CheckoutRequest(BaseModel):
     success_url: str
     cancel_url: str
 
+
 def event_id_for(workflow: str, payload: dict[str, Any]) -> str:
     canonical = json.dumps({"workflow": workflow, "payload": payload}, sort_keys=True, separators=(",", ":")).encode()
     return "evt_" + hashlib.sha256(canonical).hexdigest()[:16]
 
+
+def replay_id_for(event_id: str) -> str:
+    return "rpl_" + hashlib.sha256(event_id.encode()).hexdigest()[:16]
+
+
 def now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
 
 def emit(event: dict[str, Any]) -> dict[str, Any]:
     return engine.execute(event)
 
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "tinyd-control-plane"}
+
 
 @app.get("/v1/runtime/status")
 def runtime_status():
     snapshot = engine.snapshot()
     return {"service": "tinyd-runtime", "mode": "connected", "execution_count": len(snapshot), "event_count": len(snapshot), "replay_ready": bool(snapshot), "verification": "manifest-backed"}
 
+
 @app.get("/v1/events")
 def events(tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "events:read")
     return {"tenant_id": tenant.id, "events": [e for e in engine.snapshot().values() if e.get("tenant_id") == tenant.id]}
 
+
 @app.post("/v1/executions", status_code=201)
 def run_workflow(request: WorkflowRun, tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "executions:write")
-    event = {"id": event_id_for(request.workflow, request.payload), "type": "workflow.requested", "tenant_id": tenant.id, "workflow": request.workflow, "payload": request.payload, "timestamp": now()}
+    event = {"id": event_id_for(request.workflow, {"tenant_id": tenant.id, "payload": request.payload}), "type": "workflow.requested", "tenant_id": tenant.id, "workflow": request.workflow, "payload": request.payload, "timestamp": now()}
     return {**emit(event), "event": event}
+
 
 @app.post("/v1/replay")
 def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
@@ -70,13 +86,15 @@ def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
     event = engine.snapshot().get(request.event_id)
     if event is None or event.get("tenant_id") != tenant.id:
         raise HTTPException(status_code=404, detail="event not found")
-    replay_event = {**event, "type": "workflow.replayed", "replayed_from": event["id"], "timestamp": now()}
+    replay_event = {**event, "id": replay_id_for(event["id"]), "type": "workflow.replayed", "replayed_from": event["id"], "timestamp": now()}
     return {**emit(replay_event), "event": replay_event}
+
 
 @app.get("/v1/marketplace/packages")
 def marketplace_packages(query: str = Query(default=""), category: str = Query(default="")):
     packages = list_packages(query=query, category=category)
     return {"packages": packages, "count": len(packages), "registry": "repository-manifest"}
+
 
 @app.get("/v1/marketplace/packages/{package_id}")
 def marketplace_package(package_id: str, version: str | None = None):
@@ -84,6 +102,7 @@ def marketplace_package(package_id: str, version: str | None = None):
     if not package:
         raise HTTPException(status_code=404, detail="package not found")
     return {"package": package, "manifest_digest": manifest_digest(package)}
+
 
 @app.post("/v1/marketplace/packages/{package_id}/install", status_code=201)
 def install_package(package_id: str, version: str | None = None, tenant: Tenant = Depends(require_tenant)):
@@ -96,6 +115,7 @@ def install_package(package_id: str, version: str | None = None, tenant: Tenant 
     event = {"id": event_id_for("marketplace.install", {"tenant_id": tenant.id, "package_id": package["id"], "version": package["version"]}), "type": "marketplace.package.installed", "tenant_id": tenant.id, "package_id": package["id"], "version": package["version"], "manifest_digest": manifest_digest(package), "timestamp": now()}
     emit(event)
     return {"status": "installed", "tenant_id": tenant.id, "package": package, "event_id": event["id"]}
+
 
 @app.post("/v1/marketplace/usage", status_code=201)
 def record_usage(request: UsageRequest, tenant: Tenant = Depends(require_tenant)):
@@ -115,6 +135,7 @@ def record_usage(request: UsageRequest, tenant: Tenant = Depends(require_tenant)
                 raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"status": "recorded", "tenant_id": tenant.id, "event_id": event["id"], "usage": request.model_dump()}
 
+
 @app.post("/v1/marketplace/billing/checkout")
 def marketplace_checkout(request: CheckoutRequest, tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "billing:write")
@@ -126,6 +147,7 @@ def marketplace_checkout(request: CheckoutRequest, tenant: Tenant = Depends(requ
     except RuntimeError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 
+
 @app.post("/v1/marketplace/billing/webhook")
 async def marketplace_billing_webhook(request: Request):
     try:
@@ -135,7 +157,11 @@ async def marketplace_billing_webhook(request: Request):
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     event_type = data.get("type", "unknown")
     obj = data.get("data", {}).get("object", {})
+    if not isinstance(obj, dict):
+        raise HTTPException(status_code=400, detail="invalid Stripe webhook object")
     metadata = obj.get("metadata", {}) or {}
+    if not isinstance(metadata, dict):
+        metadata = {}
     tenant_id = metadata.get("tenant_id") or data.get("client_reference_id")
     event = {"id": "bill_" + hashlib.sha256(payload).hexdigest()[:16], "type": "billing.webhook.received", "stripe_event_type": event_type, "tenant_id": tenant_id, "payload": data, "timestamp": now()}
     emit(event)
