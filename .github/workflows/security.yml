@@ -1,0 +1,65 @@
+name: TinyD Security
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  dependency-audit:
+    name: Python dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install package and audit tooling
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e '.[test]'
+          python -m pip install 'pip-audit>=2.7,<3'
+      - name: Audit installed Python dependencies
+        run: python -m pip_audit --strict
+
+  source-integrity:
+    name: Source integrity checks
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Compile repository Python
+        run: python -m compileall -q apps packages tests
+      - name: Reject committed private-key material
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git grep -n -I -E -- '-----BEGIN (RSA |EC |OPENSSH |DSA )?PRIVATE KEY-----' -- . ':!*.md'; then
+            echo 'Private-key material detected in tracked source.' >&2
+            exit 1
+          fi
+      - name: Reject tracked environment files
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git ls-files | grep -E '(^|/)(\.env|\.env\..+)$' | grep -vE '(^|/)\.env\.example$'; then
+            echo 'Tracked environment file detected.' >&2
+            exit 1
+          fi
