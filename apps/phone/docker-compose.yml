@@ -1,0 +1,20 @@
+services:
+  phone-api:
+    build:
+      context: ./backend
+    env_file:
+      - .env
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+
+  phone-web:
+    build:
+      context: ./frontend
+      args:
+        VITE_PHONE_API: ${VITE_PHONE_API:-http://localhost:8080}
+    ports:
+      - "8088:80"
+    depends_on:
+      - phone-api
+    restart: unless-stopped
