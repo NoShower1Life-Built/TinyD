@@ -28,11 +28,18 @@ def require_tenant(authorization: str | None = Header(default=None)) -> Tenant:
     if not authorization or not authorization.lower().startswith("bearer "):
         raise HTTPException(status_code=401, detail="bearer token required")
     token = authorization[7:].strip()
+    if not token:
+        raise HTTPException(status_code=401, detail="invalid tenant credentials")
     token_hash = hashlib.sha256(token.encode()).hexdigest()
     for configured_hash, identity in _token_map().items():
+        if not isinstance(configured_hash, str) or not isinstance(identity, dict):
+            continue
         if hmac.compare_digest(configured_hash, token_hash):
-            scopes = frozenset(identity.get("scopes", []))
-            return Tenant(str(identity["tenant_id"]), scopes)
+            tenant_id = identity.get("tenant_id")
+            scopes = identity.get("scopes", [])
+            if not isinstance(tenant_id, str) or not tenant_id.strip() or not isinstance(scopes, list):
+                break
+            return Tenant(tenant_id.strip(), frozenset(str(scope) for scope in scopes))
     raise HTTPException(status_code=401, detail="invalid tenant credentials")
 
 
