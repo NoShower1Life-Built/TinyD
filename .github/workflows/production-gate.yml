@@ -88,10 +88,9 @@ jobs:
               page = browser.new_page(viewport={"width": 1440, "height": 1000}, device_scale_factor=1)
               page.goto("http://127.0.0.1:4173/index.html", wait_until="domcontentloaded")
               assert page.title() == "TinyD Marketplace"
-              heading = page.locator("main h1")
-              assert heading.count() == 1, f"expected one main h1, found {heading.count()}"
-              assert heading.is_visible(), "main h1 is not visible"
-              assert "Build on TinyD." in heading.inner_text()
+              heading = page.get_by_role("heading", level=1, name="Build on TinyD. Ship with proof.")
+              assert heading.count() == 1, f"expected one hero h1, found {heading.count()}"
+              assert heading.is_visible(), "hero h1 is not visible"
               assert page.locator("#products").count() == 1
               page.screenshot(path="marketplace-render.png", full_page=True)
               browser.close()
