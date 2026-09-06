@@ -35,14 +35,16 @@ class PostgresEventLedger:
     def append(self, event: dict[str, Any]) -> bool:
         event_id = event["id"]
         with self._connect() as conn:
-            row = conn.execute("SELECT event FROM tinyd_events WHERE event_id = %s", (event_id,)).fetchone()
-            if row is not None:
-                return False
-            conn.execute(
-                "INSERT INTO tinyd_events (event_id, tenant_id, event_type, event) VALUES (%s, %s, %s, %s::jsonb)",
+            row = conn.execute(
+                """
+                INSERT INTO tinyd_events (event_id, tenant_id, event_type, event)
+                VALUES (%s, %s, %s, %s::jsonb)
+                ON CONFLICT (event_id) DO NOTHING
+                RETURNING event_id
+                """,
                 (event_id, event.get("tenant_id"), event.get("type", "unknown"), json.dumps(event, sort_keys=True, separators=(",", ":"))),
-            )
-            return True
+            ).fetchone()
+            return row is not None
 
     def get(self, event_id: str) -> dict[str, Any] | None:
         with self._connect() as conn:
