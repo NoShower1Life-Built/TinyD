@@ -1,7 +1,29 @@
 services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: tinyd
+      POSTGRES_PASSWORD: tinyd
+      POSTGRES_DB: tinyd
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U tinyd -d tinyd"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    volumes:
+      - tinyd-postgres:/var/lib/postgresql/data
+
   tinyd-api:
     build:
       context: .
       dockerfile: docker/Dockerfile
+    environment:
+      DATABASE_URL: postgresql://tinyd:tinyd@postgres:5432/tinyd
+    depends_on:
+      postgres:
+        condition: service_healthy
     ports:
       - "8000:8000"
+
+volumes:
+  tinyd-postgres:
