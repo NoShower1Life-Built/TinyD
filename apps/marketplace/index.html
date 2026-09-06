@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="TinyD Marketplace — verified workflows, agents, tools, and runtime extensions.">
+  <title>TinyD Marketplace</title>
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#" aria-label="TinyD Marketplace home"><span class="mark">T</span><span>TinyD <b>Marketplace</b></span></a>
+    <nav><a href="#discover">Discover</a><a href="#categories">Categories</a><a href="#publish">Publish</a></nav>
+    <div class="actions"><button class="icon-btn" id="themeBtn" aria-label="Toggle theme">◐</button><button class="outline" id="dashboardBtn">Developer dashboard</button><button class="primary" id="publishTop">Publish</button></div>
+  </header>
+
+  <main>
+    <section class="hero" id="discover">
+      <div class="eyebrow"><span class="pulse"></span> VERIFIED COMPUTATION ECOSYSTEM</div>
+      <h1>Build on TinyD.<br><em>Ship with proof.</em></h1>
+      <p>Discover deterministic agents, workflows, connectors, and runtime extensions. Every package is versioned, inspectable, and designed for replay-safe execution.</p>
+      <div class="hero-search"><span>⌕</span><input id="search" placeholder="Search workflows, agents, tools, connectors…" autocomplete="off"><kbd>/</kbd></div>
+      <div class="chips" id="heroChips"><button data-filter="All">All</button><button data-filter="Agents">Agents</button><button data-filter="Workflows">Workflows</button><button data-filter="Tools">Tools</button><button data-filter="Connectors">Connectors</button></div>
+    </section>
+
+    <section class="trust-row"><div><strong>2,481</strong><span>verified packages</span></div><div><strong>98.7%</strong><span>verification pass rate</span></div><div><strong>14.2M</strong><span>executions / month</span></div><div><strong>Apache-2.0</strong><span>open ecosystem</span></div></section>
+
+    <section class="section" id="categories"><div class="section-head"><div><span class="eyebrow">EXPLORE</span><h2>Find what you need</h2></div><button class="text-btn" id="allCategories">View all →</button></div>
+      <div class="category-grid">
+        <button class="category" data-filter="Agents"><span>◎</span><b>Agents</b><small>Autonomous execution</small></button>
+        <button class="category" data-filter="Workflows"><span>⌘</span><b>Workflows</b><small>Deterministic DAGs</small></button>
+        <button class="category" data-filter="Tools"><span>◈</span><b>Tools</b><small>Capabilities & actions</small></button>
+        <button class="category" data-filter="Connectors"><span>↗</span><b>Connectors</b><small>External systems</small></button>
+        <button class="category" data-filter="Policies"><span>◇</span><b>Policies</b><small>Governance & proof</small></button>
+      </div>
+    </section>
+
+    <section class="section" id="featured"><div class="section-head"><div><span class="eyebrow">CURATED</span><h2>Featured packages</h2></div><div class="controls"><select id="sort"><option value="featured">Featured</option><option value="rating">Top rated</option><option value="newest">Newest</option></select><button class="view active" data-view="grid">▦</button><button class="view" data-view="list">☷</button></div></div><div class="product-grid" id="products"></div></section>
+
+    <section class="section publish" id="publish"><div><span class="eyebrow">FOR BUILDERS</span><h2>Publish to the TinyD ecosystem.</h2><p>Package your agent or workflow with a manifest, versioned contract, verification metadata, and usage policy. Distribution is one command away.</p></div><div class="publish-actions"><button class="primary" id="publishCta">Create a package</button><button class="outline" id="docsBtn">Read publishing guide</button></div></section>
+  </main>
+
+  <footer><span>© 2026 TinyD</span><span>Deterministic infrastructure for AI.</span><div><a href="#">Documentation</a><a href="#">API</a><a href="#">GitHub</a></div></footer>
+  <script src="./app.js"></script>
+</body>
+</html>
