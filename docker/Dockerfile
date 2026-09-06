@@ -1,7 +1,16 @@
-FROM python:3.12-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
-COPY . .
+COPY pyproject.toml README.md ./
+COPY apps ./apps
+COPY packages ./packages
+COPY tests ./tests
+COPY packages/marketplace/registry ./packages/marketplace/registry
 
-CMD ["python", "-m", "tinyd"]
+RUN python -m pip install --no-cache-dir --upgrade pip \
+    && python -m pip install --no-cache-dir .
+
+EXPOSE 8000
+
+CMD ["uvicorn", "apps.api.main:app", "--host", "0.0.0.0", "--port", "8000"]
