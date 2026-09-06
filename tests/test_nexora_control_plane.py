@@ -12,7 +12,7 @@ TEST_CONFIG = json.dumps(
     {
         hashlib.sha256(TEST_TOKEN.encode()).hexdigest(): {
             'tenant_id': TEST_TENANT,
-            'scopes': ['execution:write', 'replay:write'],
+            'scopes': ['executions:write'],
         }
     }
 )
