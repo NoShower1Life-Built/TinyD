@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import urllib.parse
 import urllib.request
@@ -7,7 +8,10 @@ import urllib.request
 
 def create_checkout_session(*, tenant_id: str, package: dict, success_url: str, cancel_url: str) -> dict:
     secret = os.environ.get("STRIPE_SECRET_KEY")
-    price_id = package.get("billing", {}).get("stripe_price_id")
+    configured_price = package.get("billing", {}).get("stripe_price_id")
+    if configured_price and str(configured_price).startswith("${") and str(configured_price).endswith("}"):
+        configured_price = os.environ.get(str(configured_price)[2:-1])
+    price_id = configured_price
     if not secret or not price_id:
         raise RuntimeError("Stripe billing is not configured for this package")
 
@@ -32,6 +36,8 @@ def create_checkout_session(*, tenant_id: str, package: dict, success_url: str, 
         headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/x-www-form-urlencoded"},
         method="POST",
     )
-    with urllib.request.urlopen(request, timeout=15) as response:
-        import json
-        return json.loads(response.read().decode())
+    try:
+        with urllib.request.urlopen(request, timeout=15) as response:
+            return json.loads(response.read().decode())
+    except Exception as exc:
+        raise RuntimeError(f"Stripe checkout request failed: {exc}") from exc
