@@ -34,7 +34,7 @@ def test_health():
     assert response.json()['status'] == 'ok'
 
 
-def test_run_is_deterministic_for_same_input(monkeypatch):
+def test_run_is_deterministic_and_idempotent(monkeypatch):
     monkeypatch.setenv('TINYD_TENANT_TOKENS', TEST_CONFIG)
     payload = {'workflow': 'nexora-check', 'payload': {'x': 1}}
     first = client.post('/v1/executions', json=payload, headers=auth_headers())
@@ -43,7 +43,27 @@ def test_run_is_deterministic_for_same_input(monkeypatch):
     assert first.status_code == 201
     assert second.status_code == 201
     assert first.json()['event_id'] == second.json()['event_id']
+    assert second.json()['idempotent'] is True
     assert client.get('/v1/runtime/status').json()['event_count'] == 1
+
+
+def test_event_ids_are_tenant_scoped(monkeypatch):
+    token_a = 'tenant-a-token'
+    token_b = 'tenant-b-token'
+    monkeypatch.setenv(
+        'TINYD_TENANT_TOKENS',
+        json.dumps(
+            {
+                hashlib.sha256(token_a.encode()).hexdigest(): {'tenant_id': 'tenant-a', 'scopes': ['executions:write']},
+                hashlib.sha256(token_b.encode()).hexdigest(): {'tenant_id': 'tenant-b', 'scopes': ['executions:write']},
+            }
+        ),
+    )
+    payload = {'workflow': 'same-workflow', 'payload': {'x': 1}}
+    a = client.post('/v1/executions', json=payload, headers={'Authorization': f'Bearer {token_a}'})
+    b = client.post('/v1/executions', json=payload, headers={'Authorization': f'Bearer {token_b}'})
+    assert a.status_code == 201 and b.status_code == 201
+    assert a.json()['event_id'] != b.json()['event_id']
 
 
 def test_replay_requires_an_existing_event(monkeypatch):
@@ -52,7 +72,7 @@ def test_replay_requires_an_existing_event(monkeypatch):
     assert missing.status_code == 404
 
 
-def test_replay_existing_event(monkeypatch):
+def test_replay_preserves_original_event(monkeypatch):
     monkeypatch.setenv('TINYD_TENANT_TOKENS', TEST_CONFIG)
     created = client.post(
         '/v1/executions',
@@ -61,7 +81,12 @@ def test_replay_existing_event(monkeypatch):
     )
     assert created.status_code == 201
     event_id = created.json()['event_id']
+    original = engine.snapshot()[event_id]
     replayed = client.post('/v1/replay', json={'event_id': event_id}, headers=auth_headers())
 
     assert replayed.status_code == 200
-    assert replayed.json()['event']['id'] == event_id
+    replay_event = replayed.json()['event']
+    assert replay_event['replayed_from'] == event_id
+    assert replay_event['id'] != event_id
+    assert engine.snapshot()[event_id] == original
+    assert engine.snapshot()[replay_event['id']]['type'] == 'workflow.replayed'
