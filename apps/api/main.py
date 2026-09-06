@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from datetime import datetime, timezone
 from typing import Any
 
@@ -12,9 +13,11 @@ from apps.api.auth import Tenant, require_scope, require_tenant
 from apps.api.billing import create_checkout_session, report_meter_event, verify_webhook_signature
 from apps.api.registry import get_package, list_packages, manifest_digest
 from packages.runtime.src.engine import RuntimeEngine
+from packages.runtime.src.ledger import PostgresEventLedger
 
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
-engine = RuntimeEngine()
+_database_url = os.getenv("DATABASE_URL", "").strip()
+engine = RuntimeEngine(ledger=PostgresEventLedger(_database_url) if _database_url else None)
 
 
 class WorkflowRun(BaseModel):
@@ -58,19 +61,19 @@ def emit(event: dict[str, Any]) -> dict[str, Any]:
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "tinyd-control-plane"}
+    return {"status": "ok", "service": "tinyd-control-plane", "persistence": "postgres" if engine.ledger else "memory"}
 
 
 @app.get("/v1/runtime/status")
 def runtime_status():
     snapshot = engine.snapshot()
-    return {"service": "tinyd-runtime", "mode": "connected", "execution_count": len(snapshot), "event_count": len(snapshot), "replay_ready": bool(snapshot), "verification": "manifest-backed"}
+    return {"service": "tinyd-runtime", "mode": "connected", "persistence": "postgres" if engine.ledger else "memory", "execution_count": len(snapshot), "event_count": len(snapshot), "replay_ready": bool(snapshot), "verification": "manifest-backed"}
 
 
 @app.get("/v1/events")
 def events(tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "events:read")
-    return {"tenant_id": tenant.id, "events": [e for e in engine.snapshot().values() if e.get("tenant_id") == tenant.id]}
+    return {"tenant_id": tenant.id, "events": list(engine.tenant_snapshot(tenant.id).values())}
 
 
 @app.post("/v1/executions", status_code=201)
@@ -83,7 +86,7 @@ def run_workflow(request: WorkflowRun, tenant: Tenant = Depends(require_tenant))
 @app.post("/v1/replay")
 def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "executions:write")
-    event = engine.snapshot().get(request.event_id)
+    event = engine.get(request.event_id)
     if event is None or event.get("tenant_id") != tenant.id:
         raise HTTPException(status_code=404, detail="event not found")
     replay_event = {**event, "id": replay_id_for(event["id"]), "type": "workflow.replayed", "replayed_from": event["id"], "timestamp": now()}
@@ -127,7 +130,7 @@ def record_usage(request: UsageRequest, tenant: Tenant = Depends(require_tenant)
     emit(event)
     meter = package.get("billing", {}).get("stripe_meter_event_name")
     if meter:
-        customer_id = next((e.get("stripe_customer_id") for e in reversed(list(engine.snapshot().values())) if e.get("type") == "billing.customer.linked" and e.get("tenant_id") == tenant.id), None)
+        customer_id = next((e.get("stripe_customer_id") for e in reversed(list(engine.tenant_snapshot(tenant.id).values())) if e.get("type") == "billing.customer.linked"), None)
         if customer_id:
             try:
                 report_meter_event(meter_event_name=meter, customer_id=customer_id, value=request.quantity, identifier=event["id"])
