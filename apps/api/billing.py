@@ -52,15 +52,29 @@ def verify_webhook_signature(payload: bytes, signature: str | None, tolerance: i
     secret = os.environ.get("STRIPE_WEBHOOK_SECRET")
     if not secret or not signature:
         raise RuntimeError("Stripe webhook verification is not configured")
-    parts = {}
+    parts: dict[str, list[str]] = {}
     for item in signature.split(","):
-        key, _, value = item.partition("=")
-        parts.setdefault(key, []).append(value)
-    timestamp = int(parts.get("t", ["0"])[0])
+        key, separator, value = item.partition("=")
+        if separator and key and value:
+            parts.setdefault(key, []).append(value)
+    try:
+        timestamp = int(parts.get("t", [""])[0])
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("invalid Stripe webhook signature") from exc
     if abs(int(time.time()) - timestamp) > tolerance:
         raise RuntimeError("Stripe webhook timestamp outside tolerance")
-    signed = f"{timestamp}.{payload.decode()}".encode()
+    try:
+        signed = f"{timestamp}.".encode() + payload
+        payload_text = payload.decode("utf-8")
+    except UnicodeDecodeError as exc:
+        raise RuntimeError("invalid Stripe webhook payload") from exc
     expected = hmac.new(secret.encode(), signed, hashlib.sha256).hexdigest()
     if not any(hmac.compare_digest(expected, candidate) for candidate in parts.get("v1", [])):
         raise RuntimeError("invalid Stripe webhook signature")
-    return json.loads(payload.decode())
+    try:
+        data = json.loads(payload_text)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError("invalid Stripe webhook payload") from exc
+    if not isinstance(data, dict):
+        raise RuntimeError("invalid Stripe webhook payload")
+    return data
