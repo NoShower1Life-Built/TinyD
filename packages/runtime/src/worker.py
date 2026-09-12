@@ -14,7 +14,7 @@ except ImportError:
     from scheduler import DurableScheduler, WorkItem
 
 
-EventResolver = Callable[[WorkItem], Any]
+HeartbeatConnectionFactory = Callable[[], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +26,7 @@ class WorkerResult:
 
 
 class RuntimeWorker:
-    """Durable worker using authoritative event resolution and fenced leases."""
+    """Durable worker with an independently owned PostgreSQL heartbeat connection."""
 
     def __init__(
         self,
@@ -35,6 +35,7 @@ class RuntimeWorker:
         *,
         worker_id: str,
         lease_duration: timedelta,
+        heartbeat_connection_factory: HeartbeatConnectionFactory,
         max_attempts: int = 3,
         retry_delay: timedelta = timedelta(seconds=1),
         heartbeat_interval: timedelta | None = None,
@@ -43,6 +44,8 @@ class RuntimeWorker:
             raise ValueError("worker_id must not be empty")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
+        if not callable(heartbeat_connection_factory):
+            raise ValueError("heartbeat_connection_factory must be callable")
         if max_attempts < 1:
             raise ValueError("max_attempts must be positive")
         if retry_delay < timedelta(0):
@@ -54,6 +57,7 @@ class RuntimeWorker:
         self.journal = journal
         self.worker_id = worker_id
         self.lease_duration = lease_duration
+        self.heartbeat_connection_factory = heartbeat_connection_factory
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
         self.heartbeat_interval = interval
@@ -100,20 +104,34 @@ class RuntimeWorker:
             heartbeat.join(timeout=max(self.heartbeat_interval.total_seconds(), 0.1))
 
     def _heartbeat(self, work_id: UUID, lease_token: UUID, stop: Event, lease_lost: Event) -> None:
-        while not stop.wait(self.heartbeat_interval.total_seconds()):
-            try:
-                renewed = self.scheduler.renew(
-                    work_id,
-                    self.worker_id,
-                    lease_token,
-                    lease_duration=self.lease_duration,
-                )
-            except Exception:
-                lease_lost.set()
+        connection = None
+        try:
+            if stop.is_set():
                 return
-            if not renewed:
-                lease_lost.set()
-                return
+            connection = self.heartbeat_connection_factory()
+            scheduler = DurableScheduler(connection)
+            while not stop.wait(self.heartbeat_interval.total_seconds()):
+                try:
+                    renewed = scheduler.renew(
+                        work_id,
+                        self.worker_id,
+                        lease_token,
+                        lease_duration=self.lease_duration,
+                    )
+                except Exception:
+                    lease_lost.set()
+                    return
+                if not renewed:
+                    lease_lost.set()
+                    return
+        except Exception:
+            lease_lost.set()
+        finally:
+            if connection is not None:
+                try:
+                    connection.close()
+                except Exception:
+                    pass
 
     def _record_failure(self, work: WorkItem, exc: Exception) -> None:
         try:
@@ -167,6 +185,7 @@ def build_worker(
     *,
     worker_id: str,
     lease_duration: timedelta,
+    heartbeat_connection_factory: HeartbeatConnectionFactory,
     max_attempts: int = 3,
     retry_delay: timedelta = timedelta(seconds=1),
     heartbeat_interval: timedelta | None = None,
@@ -176,6 +195,7 @@ def build_worker(
         journal=journal,
         worker_id=worker_id,
         lease_duration=lease_duration,
+        heartbeat_connection_factory=heartbeat_connection_factory,
         max_attempts=max_attempts,
         retry_delay=retry_delay,
         heartbeat_interval=heartbeat_interval,
