@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
-from typing import Any
+from typing import Any, Callable
 from uuid import UUID
 
 try:
@@ -12,6 +12,9 @@ try:
 except ImportError:
     from event_journal import EventJournal
     from scheduler import DurableScheduler, WorkItem
+
+
+EventResolver = Callable[[WorkItem], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,13 +99,7 @@ class RuntimeWorker:
             heartbeat_stop.set()
             heartbeat.join(timeout=max(self.heartbeat_interval.total_seconds(), 0.1))
 
-    def _heartbeat(
-        self,
-        work_id: UUID,
-        lease_token: UUID,
-        stop: Event,
-        lease_lost: Event,
-    ) -> None:
+    def _heartbeat(self, work_id: UUID, lease_token: UUID, stop: Event, lease_lost: Event) -> None:
         while not stop.wait(self.heartbeat_interval.total_seconds()):
             try:
                 renewed = self.scheduler.renew(
