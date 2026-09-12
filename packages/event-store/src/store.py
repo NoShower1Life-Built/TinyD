@@ -14,12 +14,7 @@ class AppendResult:
 
 
 class EventStore:
-    """Authoritative event-store interface.
-
-    The storage backend is injected so the integrity/idempotency contract is
-    independent of the database driver. ``PostgresEventStore`` supplies the
-    production SQL implementation below.
-    """
+    """Authoritative event-store interface."""
 
     def append(self, event: EventEnvelope) -> AppendResult:
         raise NotImplementedError
@@ -29,7 +24,7 @@ class EventStore:
 
 
 class PostgresEventStore(EventStore):
-    """PostgreSQL event store using one transaction per append/read operation."""
+    """PostgreSQL authoritative event store."""
 
     def __init__(self, connection: Any) -> None:
         self._connection = connection
@@ -41,48 +36,49 @@ class PostgresEventStore(EventStore):
 
         with self._lock, self._connection.cursor() as cursor:
             cursor.execute(
+                "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                (f"{event.tenant_id}\x1f{event.aggregate_id}\x1f{event.run_id}",),
+            )
+            cursor.execute(
                 """
                 SELECT event_id, event_hash, sequence, tenant_id, aggregate_id, run_id
-                FROM tinyd_events
-                WHERE event_id = %s
-                FOR UPDATE
+                FROM tinyd_events WHERE event_id = %s FOR UPDATE
                 """,
                 (event.event_id,),
             )
             existing = cursor.fetchone()
             if existing is not None:
                 if existing[1] != event.event_hash:
+                    self._connection.rollback()
                     raise ValueError("event_id already exists with different event content")
-                if (
-                    existing[2] != event.sequence
-                    or existing[3] != event.tenant_id
-                    or existing[4] != event.aggregate_id
-                    or existing[5] != event.run_id
+                if (existing[2], existing[3], existing[4], existing[5]) != (
+                    event.sequence, event.tenant_id, event.aggregate_id, event.run_id
                 ):
+                    self._connection.rollback()
                     raise ValueError("event_id already exists with conflicting event identity")
                 self._connection.commit()
                 return AppendResult(event=event, inserted=False)
 
             cursor.execute(
                 """
-                SELECT event_hash, sequence, tenant_id, aggregate_id, run_id
-                FROM tinyd_events
+                SELECT event_hash, sequence FROM tinyd_events
                 WHERE tenant_id = %s AND aggregate_id = %s AND run_id = %s
-                ORDER BY sequence DESC
-                LIMIT 1
-                FOR UPDATE
+                ORDER BY sequence DESC LIMIT 1 FOR UPDATE
                 """,
                 (event.tenant_id, event.aggregate_id, event.run_id),
             )
             previous = cursor.fetchone()
             if previous is None:
                 if event.sequence != 0 or event.previous_hash is not None:
+                    self._connection.rollback()
                     raise ValueError("first event must start at sequence 0 without previous_hash")
             else:
-                previous_hash, previous_sequence, *_ = previous
+                previous_hash, previous_sequence = previous
                 if event.sequence != previous_sequence + 1:
+                    self._connection.rollback()
                     raise ValueError("event sequence is not contiguous")
                 if event.previous_hash != previous_hash:
+                    self._connection.rollback()
                     raise ValueError("event previous_hash does not match chain head")
 
             cursor.execute(
@@ -91,9 +87,7 @@ class PostgresEventStore(EventStore):
                     event_id, event_type, schema_version, aggregate_id, run_id,
                     tenant_id, sequence, logical_time, causation_id, correlation_id,
                     producer, payload, previous_hash, event_hash, metadata, timestamp
-                ) VALUES (
-                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
-                )
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """,
                 (
                     event.event_id, event.event_type, event.schema_version,
