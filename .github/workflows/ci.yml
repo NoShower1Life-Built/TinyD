@@ -40,3 +40,5 @@ jobs:
         run: |
           PYTHONPATH=packages/event-store python -m pytest packages/event-store/tests -q
           PYTHONPATH=packages/runtime python -m pytest packages/runtime/tests -q
+
+# CI retrigger commit: validate the corrected runtime-journal test path.
