@@ -1,5 +1,3 @@
-BEGIN;
-
 CREATE TABLE IF NOT EXISTS tinyd_work_items (
     work_id UUID PRIMARY KEY,
     tenant_id TEXT NOT NULL,
@@ -34,5 +32,3 @@ CREATE INDEX IF NOT EXISTS tinyd_work_items_claim_idx
 CREATE INDEX IF NOT EXISTS tinyd_work_items_lease_idx
     ON tinyd_work_items (lease_expires_at, work_id)
     WHERE status = 'LEASED';
-
-COMMIT;
