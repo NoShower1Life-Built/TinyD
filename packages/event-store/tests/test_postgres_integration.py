@@ -107,7 +107,7 @@ def test_conflicting_event_id_is_rejected():
         first = make_event(event_id="same-id")
         store.append(first)
         conflicting = make_event(event_id="same-id", payload={"different": True})
-        with pytest.raises(ValueError, match="event_id conflict"):
+        with pytest.raises(ValueError, match="event_id already exists with different event content"):
             store.append(conflicting)
         assert store.read("tenant-1", "aggregate-1", "run-1") == (first,)
     finally:
@@ -149,7 +149,7 @@ def test_hash_mismatch_is_rejected_before_db_write():
         store = PostgresEventStore(connection)
         first = make_event()
         tampered = EventEnvelope(**{**first.as_dict(), "payload": {"tampered": True}})
-        with pytest.raises(ValueError, match="hash mismatch"):
+        with pytest.raises(ValueError, match="event hash does not match canonical event"):
             store.append(tampered)
         assert store.read("tenant-1", "aggregate-1", "run-1") == ()
     finally:
