@@ -142,7 +142,7 @@ class PostgresEventStore(EventStore):
         try:
             events = self.read(identity[0], identity[1], identity[2])
         except ValueError as exc:
-            raise ValueError(f"authoritative event verification failed for {event_id}: {exc}") from exc
+            raise ValueError(f"authoritative event hash verification failed for {event_id}: {exc}") from exc
         for event in events:
             if event.event_id == event_id:
                 return event
