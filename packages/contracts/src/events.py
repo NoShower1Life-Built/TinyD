@@ -66,7 +66,26 @@ class EventRegistration(NamedTuple):
     aggregate_type: str
 
 
+_PREFIX_TO_AGGREGATE = {
+    "agent": "agent",
+    "run": "run",
+    "plan": "run",
+    "step": "step",
+    "capability": "step",
+    "model": "step",
+    "memory": "agent",
+    "verification": "run",
+    "artifact": "artifact",
+    "provenance": "artifact",
+    "approval": "run",
+}
+
+
+def _registration(event: EventType) -> EventRegistration:
+    prefix = event.value.split(".", 1)[0]
+    return EventRegistration(event, 1, _PREFIX_TO_AGGREGATE[prefix])
+
+
 EVENT_REGISTRY: dict[EventType, EventRegistration] = {
-    event: EventRegistration(event, 1, "agent" if event.value.startswith("agent.") else "run" if event.value.startswith(("run.", "plan.", "step.", "capability.", "model.", "memory.", "verification.", "artifact.", "provenance.", "approval.")) else "unknown")
-    for event in EventType
+    event: _registration(event) for event in EventType
 }
