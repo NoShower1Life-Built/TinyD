@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
-from typing import Any, Callable
+from typing import Any
 from uuid import UUID
 
 try:
@@ -12,9 +12,6 @@ try:
 except ImportError:
     from event_journal import EventJournal
     from scheduler import DurableScheduler, WorkItem
-
-
-EventResolver = Callable[[WorkItem], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,7 +23,7 @@ class WorkerResult:
 
 
 class RuntimeWorker:
-    """Durable worker: claim, resolve, append through EventJournal, then acknowledge."""
+    """Durable worker using authoritative event resolution and fenced leases."""
 
     def __init__(
         self,
@@ -35,51 +32,56 @@ class RuntimeWorker:
         *,
         worker_id: str,
         lease_duration: timedelta,
-        event_resolver: EventResolver,
         max_attempts: int = 3,
         retry_delay: timedelta = timedelta(seconds=1),
+        heartbeat_interval: timedelta | None = None,
     ) -> None:
         if not worker_id:
             raise ValueError("worker_id must not be empty")
         if lease_duration <= timedelta(0):
             raise ValueError("lease_duration must be positive")
-        if not callable(event_resolver):
-            raise ValueError("event_resolver must be callable")
         if max_attempts < 1:
             raise ValueError("max_attempts must be positive")
         if retry_delay < timedelta(0):
             raise ValueError("retry_delay must not be negative")
+        interval = heartbeat_interval or lease_duration / 3
+        if interval <= timedelta(0) or interval >= lease_duration:
+            raise ValueError("heartbeat_interval must be positive and shorter than lease_duration")
         self.scheduler = scheduler
         self.journal = journal
         self.worker_id = worker_id
         self.lease_duration = lease_duration
-        self.event_resolver = event_resolver
         self.max_attempts = max_attempts
         self.retry_delay = retry_delay
+        self.heartbeat_interval = interval
         self._stop = Event()
 
     def process_once(self) -> WorkerResult | None:
         work = self.scheduler.claim(self.worker_id, lease_duration=self.lease_duration)
         if work is None:
             return None
+        if work.lease_token is None:
+            raise RuntimeError(f"claimed work item {work.work_id} has no lease token")
+
+        lease_lost = Event()
+        heartbeat_stop = Event()
+        heartbeat = Thread(
+            target=self._heartbeat,
+            args=(work.work_id, work.lease_token, heartbeat_stop, lease_lost),
+            daemon=True,
+        )
+        heartbeat.start()
         try:
-            event = self.event_resolver(work)
-            if event is None:
-                raise RuntimeError(f"event resolver returned no event for {work.event_id}")
-            if getattr(event, "event_id", None) != work.event_id:
-                raise RuntimeError("resolved event_id does not match work item")
-            if getattr(event, "tenant_id", None) != work.tenant_id:
-                raise RuntimeError("resolved tenant_id does not match work item")
-            if getattr(event, "aggregate_id", None) != work.aggregate_id:
-                raise RuntimeError("resolved aggregate_id does not match work item")
-            if getattr(event, "run_id", None) != work.run_id:
-                raise RuntimeError("resolved run_id does not match work item")
+            event = self.journal.load_event(work.event_id)
+            self._validate_authoritative_event(event, work)
+            if lease_lost.is_set():
+                raise RuntimeError("worker lease was lost before event append")
 
             result = self.journal.append(event)
             inserted = getattr(result, "inserted", None)
             if inserted not in (True, False):
                 raise RuntimeError("event journal append returned an invalid result")
-            if not self.scheduler.complete(work.work_id, self.worker_id):
+            if not self.scheduler.complete(work.work_id, self.worker_id, work.lease_token):
                 raise RuntimeError("worker lease was lost before completion")
             return WorkerResult(
                 work_id=work.work_id,
@@ -88,14 +90,56 @@ class RuntimeWorker:
                 appended=inserted,
             )
         except Exception as exc:
+            self._record_failure(work, exc)
+            raise
+        finally:
+            heartbeat_stop.set()
+            heartbeat.join(timeout=max(self.heartbeat_interval.total_seconds(), 0.1))
+
+    def _heartbeat(
+        self,
+        work_id: UUID,
+        lease_token: UUID,
+        stop: Event,
+        lease_lost: Event,
+    ) -> None:
+        while not stop.wait(self.heartbeat_interval.total_seconds()):
+            try:
+                renewed = self.scheduler.renew(
+                    work_id,
+                    self.worker_id,
+                    lease_token,
+                    lease_duration=self.lease_duration,
+                )
+            except Exception:
+                lease_lost.set()
+                return
+            if not renewed:
+                lease_lost.set()
+                return
+
+    def _record_failure(self, work: WorkItem, exc: Exception) -> None:
+        try:
             self.scheduler.fail(
                 work.work_id,
                 self.worker_id,
+                work.lease_token,
                 str(exc),
                 retry_at=datetime.now(timezone.utc) + self.retry_delay,
                 max_attempts=self.max_attempts,
             )
-            raise
+        except Exception:
+            # Preserve the primary processing failure. If failure recording is
+            # unavailable, lease expiry remains the durable recovery mechanism.
+            return
+
+    @staticmethod
+    def _validate_authoritative_event(event: Any, work: WorkItem) -> None:
+        if event is None:
+            raise RuntimeError(f"authoritative event {work.event_id} was not found")
+        for field in ("event_id", "tenant_id", "aggregate_id", "run_id"):
+            if getattr(event, field, None) != getattr(work, field):
+                raise RuntimeError(f"authoritative event {field} does not match work item")
 
     def run(self, poll_interval: float = 0.5) -> None:
         if poll_interval <= 0:
@@ -126,16 +170,16 @@ def build_worker(
     *,
     worker_id: str,
     lease_duration: timedelta,
-    event_resolver: EventResolver,
     max_attempts: int = 3,
     retry_delay: timedelta = timedelta(seconds=1),
+    heartbeat_interval: timedelta | None = None,
 ) -> RuntimeWorker:
     return RuntimeWorker(
         scheduler=scheduler,
         journal=journal,
         worker_id=worker_id,
         lease_duration=lease_duration,
-        event_resolver=event_resolver,
         max_attempts=max_attempts,
         retry_delay=retry_delay,
+        heartbeat_interval=heartbeat_interval,
     )
