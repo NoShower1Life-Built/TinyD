@@ -22,6 +22,16 @@ sys.modules[_RUNTIME_JOURNAL_NAME] = _RUNTIME_JOURNAL_MODULE
 _RUNTIME_JOURNAL_SPEC.loader.exec_module(_RUNTIME_JOURNAL_MODULE)
 EventJournal = _RUNTIME_JOURNAL_MODULE.EventJournal
 
+_RUNTIME_WORKER_PATH = Path(__file__).parents[2] / "runtime" / "src" / "worker.py"
+_RUNTIME_WORKER_NAME = "tinyd_runtime_worker"
+_RUNTIME_WORKER_SPEC = importlib.util.spec_from_file_location(_RUNTIME_WORKER_NAME, _RUNTIME_WORKER_PATH)
+_RUNTIME_WORKER_MODULE = importlib.util.module_from_spec(_RUNTIME_WORKER_SPEC)
+assert _RUNTIME_WORKER_SPEC.loader is not None
+sys.modules[_RUNTIME_WORKER_NAME] = _RUNTIME_WORKER_MODULE
+_RUNTIME_WORKER_SPEC.loader.exec_module(_RUNTIME_WORKER_MODULE)
+RuntimeScheduler = _RUNTIME_WORKER_MODULE.RuntimeScheduler
+RuntimeWorker = _RUNTIME_WORKER_MODULE.RuntimeWorker
+
 DATABASE_URL = os.environ.get("TINYD_TEST_DATABASE_URL")
 pytestmark = pytest.mark.skipif(not DATABASE_URL, reason="TINYD_TEST_DATABASE_URL is not set")
 
@@ -77,6 +87,26 @@ def test_runtime_event_journal_uses_postgres_as_authoritative_boundary():
         first = make_event()
         assert journal.append(first).inserted is True
         assert journal.load("tenant-1", "aggregate-1", "run-1") == (first,)
+    finally:
+        connection.close()
+
+
+def test_scheduler_worker_persists_through_event_journal_to_postgres():
+    connection = connect()
+    try:
+        journal = EventJournal(PostgresEventStore(connection))
+        scheduler = RuntimeScheduler()
+        worker = RuntimeWorker(scheduler=scheduler, journal=journal)
+        first = make_event()
+
+        scheduler.submit(first)
+        result = worker.process_once(timeout=1.0)
+
+        assert result.inserted is True
+        assert journal.load("tenant-1", "aggregate-1", "run-1") == (first,)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT count(*) FROM tinyd_events")
+            assert cursor.fetchone()[0] == 1
     finally:
         connection.close()
 
