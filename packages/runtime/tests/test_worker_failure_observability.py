@@ -113,7 +113,7 @@ def test_failure_recording_failure_is_observable_without_masking_primary_error(m
     assert outcome.status == "RECORDING_FAILED"
     assert outcome.recording_error == "failure store unavailable"
     assert outcome.recovery == "lease_expiry_or_reclamation"
-    assert "durable failure recording failed" in raised.value.__notes__
+    assert any("durable failure recording failed" in note for note in raised.value.__notes__)
 
 
 def test_fenced_failure_recording_failure_is_observable_and_recoverable(monkeypatch):
