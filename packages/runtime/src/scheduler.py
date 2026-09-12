@@ -38,9 +38,8 @@ class DurableScheduler:
     authoritative event history. Work items are created only for events that
     already exist in that ledger.
 
-    ``complete`` and ``fail`` retain a temporary owner-only compatibility path
-    for the existing Worker. The hardened Worker must pass the lease token;
-    the compatibility path is not considered fencing-complete.
+    Every mutation of a leased work item is fenced by the lease token issued
+    by ``claim``. There is deliberately no owner-only compatibility path.
     """
 
     def __init__(self, connection: Any) -> None:
@@ -179,36 +178,20 @@ class DurableScheduler:
             self._connection.commit()
         return updated == 1
 
-    def complete(self, work_id: UUID, worker_id: str, lease_token: UUID | None = None) -> bool:
-        if not worker_id:
-            raise ValueError("worker_id must not be empty")
+    def complete(self, work_id: UUID, worker_id: str, lease_token: UUID) -> bool:
+        _validate_worker_and_token(worker_id, lease_token)
         with self._connection.cursor() as cursor:
-            if lease_token is None:
-                cursor.execute(
-                    """
-                    UPDATE tinyd_work_items
-                    SET status = 'COMPLETED', completed_at = %s,
-                        lease_owner = NULL, lease_token = NULL,
-                        lease_expires_at = NULL, last_error = NULL
-                    WHERE work_id = %s AND status = 'LEASED'
-                      AND lease_owner = %s AND lease_expires_at > %s
-                    """,
-                    (datetime.now(timezone.utc), str(work_id), worker_id, datetime.now(timezone.utc)),
-                )
-            else:
-                if not isinstance(lease_token, UUID):
-                    raise ValueError("lease_token must be a UUID")
-                cursor.execute(
-                    """
-                    UPDATE tinyd_work_items
-                    SET status = 'COMPLETED', completed_at = %s,
-                        lease_owner = NULL, lease_token = NULL,
-                        lease_expires_at = NULL, last_error = NULL
-                    WHERE work_id = %s AND status = 'LEASED'
-                      AND lease_owner = %s AND lease_token = %s
-                    """,
-                    (datetime.now(timezone.utc), str(work_id), worker_id, str(lease_token)),
-                )
+            cursor.execute(
+                """
+                UPDATE tinyd_work_items
+                SET status = 'COMPLETED', completed_at = %s,
+                    lease_owner = NULL, lease_token = NULL,
+                    lease_expires_at = NULL, last_error = NULL
+                WHERE work_id = %s AND status = 'LEASED'
+                  AND lease_owner = %s AND lease_token = %s
+                """,
+                (datetime.now(timezone.utc), str(work_id), worker_id, str(lease_token)),
+            )
             updated = cursor.rowcount
             self._connection.commit()
         return updated == 1
@@ -217,54 +200,31 @@ class DurableScheduler:
         self,
         work_id: UUID,
         worker_id: str,
-        lease_token_or_error: UUID | str,
-        error: str | None = None,
+        lease_token: UUID,
+        error: str,
         *,
         retry_at: datetime | None,
         max_attempts: int,
     ) -> bool:
-        if not worker_id:
-            raise ValueError("worker_id must not be empty")
+        _validate_worker_and_token(worker_id, lease_token)
         if max_attempts < 1:
             raise ValueError("max_attempts must be positive")
-        if isinstance(lease_token_or_error, UUID):
-            lease_token = lease_token_or_error
-            failure = error
-        else:
-            lease_token = None
-            failure = lease_token_or_error
-        if not failure:
+        if not error:
             raise ValueError("error must not be empty")
         when = _utc(retry_at) if retry_at is not None else None
         with self._connection.cursor() as cursor:
-            if lease_token is None:
-                cursor.execute(
-                    """
-                    UPDATE tinyd_work_items
-                    SET status = CASE WHEN attempt_count >= %s THEN 'FAILED' ELSE 'PENDING' END,
-                        available_at = CASE WHEN attempt_count >= %s THEN available_at ELSE COALESCE(%s, available_at) END,
-                        lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
-                        last_error = %s
-                    WHERE work_id = %s AND status = 'LEASED'
-                      AND lease_owner = %s AND lease_expires_at > %s
-                    """,
-                    (max_attempts, max_attempts, when, failure, str(work_id), worker_id, datetime.now(timezone.utc)),
-                )
-            else:
-                if not isinstance(lease_token, UUID):
-                    raise ValueError("lease_token must be a UUID")
-                cursor.execute(
-                    """
-                    UPDATE tinyd_work_items
-                    SET status = CASE WHEN attempt_count >= %s THEN 'FAILED' ELSE 'PENDING' END,
-                        available_at = CASE WHEN attempt_count >= %s THEN available_at ELSE COALESCE(%s, available_at) END,
-                        lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
-                        last_error = %s
-                    WHERE work_id = %s AND status = 'LEASED'
-                      AND lease_owner = %s AND lease_token = %s
-                    """,
-                    (max_attempts, max_attempts, when, failure, str(work_id), worker_id, str(lease_token)),
-                )
+            cursor.execute(
+                """
+                UPDATE tinyd_work_items
+                SET status = CASE WHEN attempt_count >= %s THEN 'FAILED' ELSE 'PENDING' END,
+                    available_at = CASE WHEN attempt_count >= %s THEN available_at ELSE COALESCE(%s, available_at) END,
+                    lease_owner = NULL, lease_token = NULL, lease_expires_at = NULL,
+                    last_error = %s
+                WHERE work_id = %s AND status = 'LEASED'
+                  AND lease_owner = %s AND lease_token = %s
+                """,
+                (max_attempts, max_attempts, when, error, str(work_id), worker_id, str(lease_token)),
+            )
             updated = cursor.rowcount
             self._connection.commit()
         return updated == 1
@@ -299,11 +259,15 @@ def _validate_event_identity(event: SchedulableEvent) -> None:
             raise ValueError(f"event.{name} must be a non-empty string")
 
 
-def _validate_lease_arguments(worker_id: str, lease_token: UUID, lease_duration: timedelta) -> None:
+def _validate_worker_and_token(worker_id: str, lease_token: UUID) -> None:
     if not worker_id:
         raise ValueError("worker_id must not be empty")
     if not isinstance(lease_token, UUID):
         raise ValueError("lease_token must be a UUID")
+
+
+def _validate_lease_arguments(worker_id: str, lease_token: UUID, lease_duration: timedelta) -> None:
+    _validate_worker_and_token(worker_id, lease_token)
     if lease_duration <= timedelta(0):
         raise ValueError("lease_duration must be positive")
 
