@@ -77,9 +77,10 @@ class LegacyEventAdapter:
 
     @staticmethod
     def _payload(event: dict[str, Any]) -> dict[str, Any]:
-        return dict(event.get("payload", event)) if isinstance(event.get("payload", event), dict) else {
-            "value": event.get("payload")
-        }
+        raw = event.get("payload")
+        if isinstance(raw, dict):
+            return dict(raw)
+        return {"value": raw} if raw is not None else {}
 
     @classmethod
     def adapt(
@@ -92,9 +93,12 @@ class LegacyEventAdapter:
             raise LegacyEventAdapterError("legacy event must be an object")
 
         event_type = cls._required_text(event, "type")
-        mapping = get_mapping(event_type)
-        tenant_uuid, legacy_tenant_id = cls._tenant_id(event.get("tenant_id"))
+        try:
+            mapping = get_mapping(event_type)
+        except EventMappingError as exc:
+            raise LegacyEventAdapterError(str(exc)) from exc
 
+        tenant_uuid, legacy_tenant_id = cls._tenant_id(event.get("tenant_id"))
         if authenticated_tenant_id is not None:
             auth_uuid = cls._uuid(authenticated_tenant_id, "authenticated_tenant_id")
             if auth_uuid != tenant_uuid:
@@ -123,7 +127,6 @@ class LegacyEventAdapter:
             return None if value is None else cls._uuid(value, field)
 
         correlation_uuid = optional_uuid("correlation_id") or event_uuid
-        payload = cls._payload(event)
         metadata = dict(event.get("metadata", {})) if isinstance(event.get("metadata"), dict) else {}
         metadata.update(
             {
@@ -138,7 +141,7 @@ class LegacyEventAdapter:
         return EventEnvelope(
             event_id=event_uuid,
             event_type=mapping.event_type.value,
-            event_version=mapping.event_type and 1,
+            event_version=1,
             occurred_at=cls._timestamp(event.get("occurred_at", event.get("timestamp"))),
             tenant_id=tenant_uuid,
             agent_id=agent_uuid,
@@ -152,7 +155,7 @@ class LegacyEventAdapter:
             aggregate_id=aggregate_uuid,
             sequence=int(event.get("sequence", 1)),
             producer=cls.producer,
-            payload=payload,
+            payload=LegacyEventAdapter._payload(event),
             metadata=metadata,
             integrity={"previous_digest": None, "digest": ""},
         )
