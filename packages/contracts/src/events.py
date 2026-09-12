@@ -58,6 +58,12 @@ class EventType(StrEnum):
     APPROVAL_REQUESTED = "approval.requested"
     APPROVAL_GRANTED = "approval.granted"
     APPROVAL_DENIED = "approval.denied"
+    LEGACY_WORKFLOW_REQUESTED = "workflow.requested"
+    LEGACY_WORKFLOW_REPLAYED = "workflow.replayed"
+    LEGACY_MARKETPLACE_PACKAGE_INSTALLED = "marketplace.package.installed"
+    LEGACY_MARKETPLACE_USAGE_RECORDED = "marketplace.usage.recorded"
+    LEGACY_BILLING_WEBHOOK_RECEIVED = "billing.webhook.received"
+    LEGACY_BILLING_CUSTOMER_LINKED = "billing.customer.linked"
 
 
 class EventRegistration(NamedTuple):
@@ -80,10 +86,22 @@ _PREFIX_TO_AGGREGATE = {
     "approval": "run",
 }
 
+_LEGACY_AGGREGATES = {
+    EventType.LEGACY_WORKFLOW_REQUESTED: "workflow",
+    EventType.LEGACY_WORKFLOW_REPLAYED: "workflow",
+    EventType.LEGACY_MARKETPLACE_PACKAGE_INSTALLED: "marketplace_package",
+    EventType.LEGACY_MARKETPLACE_USAGE_RECORDED: "marketplace_usage",
+    EventType.LEGACY_BILLING_WEBHOOK_RECEIVED: "billing",
+    EventType.LEGACY_BILLING_CUSTOMER_LINKED: "billing",
+}
+
 
 def _registration(event: EventType) -> EventRegistration:
-    prefix = event.value.split(".", 1)[0]
-    return EventRegistration(event, 1, _PREFIX_TO_AGGREGATE[prefix])
+    aggregate_type = _LEGACY_AGGREGATES.get(event)
+    if aggregate_type is None:
+        prefix = event.value.split(".", 1)[0]
+        aggregate_type = _PREFIX_TO_AGGREGATE[prefix]
+    return EventRegistration(event, 1, aggregate_type)
 
 
 EVENT_REGISTRY: dict[EventType, EventRegistration] = {
