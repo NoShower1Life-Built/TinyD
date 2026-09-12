@@ -5,7 +5,7 @@ import json
 from threading import RLock
 from typing import Any, Iterable
 
-from .events import EventEnvelope, event_hash, validate_event_chain, verify_event_hash
+from .events import EventEnvelope, event_hash, validate_event_chain
 
 
 @dataclass(frozen=True, slots=True)
@@ -130,21 +130,20 @@ class PostgresEventStore(EventStore):
         with self._lock, self._connection.cursor() as cursor:
             cursor.execute(
                 """
-                SELECT event_id, event_type, schema_version, aggregate_id, run_id,
-                       tenant_id, sequence, logical_time, causation_id, correlation_id,
-                       producer, payload, previous_hash, event_hash, metadata, timestamp
+                SELECT tenant_id, aggregate_id, run_id
                 FROM tinyd_events
                 WHERE event_id = %s
                 """,
                 (event_id,),
             )
-            row = cursor.fetchone()
-        if row is None:
+            identity = cursor.fetchone()
+        if identity is None:
             raise KeyError(f"event not found: {event_id}")
-        event = _row_to_event(row)
-        if not verify_event_hash(event):
-            raise ValueError("authoritative event hash verification failed")
-        return event
+        events = self.read(identity[0], identity[1], identity[2])
+        for event in events:
+            if event.event_id == event_id:
+                return event
+        raise KeyError(f"event disappeared during authoritative lookup: {event_id}")
 
 
 DDL = """
