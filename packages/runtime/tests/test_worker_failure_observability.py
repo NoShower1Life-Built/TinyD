@@ -58,6 +58,15 @@ def make_work() -> Work:
     return Work(uuid4(), "event-1", "tenant-1", "aggregate-1", "run-1", uuid4())
 
 
+def make_event(work: Work):
+    return SimpleNamespace(
+        event_id=work.event_id,
+        tenant_id=work.tenant_id,
+        aggregate_id=work.aggregate_id,
+        run_id=work.run_id,
+    )
+
+
 def make_worker(scheduler, journal):
     return RuntimeWorker(
         scheduler=scheduler,
@@ -74,7 +83,7 @@ def make_worker(scheduler, journal):
 def test_failure_recording_success_is_explicit(monkeypatch):
     work = make_work()
     scheduler = Scheduler(work, fail_result=True)
-    journal = Journal(error=RuntimeError("primary failure"))
+    journal = Journal(event=make_event(work), error=RuntimeError("primary failure"))
     monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, *args: None)
 
     worker = make_worker(scheduler, journal)
@@ -92,7 +101,7 @@ def test_failure_recording_success_is_explicit(monkeypatch):
 def test_failure_recording_failure_is_observable_without_masking_primary_error(monkeypatch):
     work = make_work()
     scheduler = Scheduler(work, fail_error=RuntimeError("failure store unavailable"))
-    journal = Journal(error=RuntimeError("primary failure"))
+    journal = Journal(event=make_event(work), error=RuntimeError("primary failure"))
     monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, *args: None)
 
     worker = make_worker(scheduler, journal)
@@ -110,7 +119,7 @@ def test_failure_recording_failure_is_observable_without_masking_primary_error(m
 def test_fenced_failure_recording_failure_is_observable_and_recoverable(monkeypatch):
     work = make_work()
     scheduler = Scheduler(work, fail_result=False)
-    journal = Journal(error=RuntimeError("primary failure"))
+    journal = Journal(event=make_event(work), error=RuntimeError("primary failure"))
     monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, *args: None)
 
     worker = make_worker(scheduler, journal)
