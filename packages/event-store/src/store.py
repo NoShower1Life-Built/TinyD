@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 from threading import RLock
 from typing import Any, Iterable
 
@@ -87,14 +88,16 @@ class PostgresEventStore(EventStore):
                     event_id, event_type, schema_version, aggregate_id, run_id,
                     tenant_id, sequence, logical_time, causation_id, correlation_id,
                     producer, payload, previous_hash, event_hash, metadata, timestamp
-                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                ) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s::jsonb,%s)
                 """,
                 (
                     event.event_id, event.event_type, event.schema_version,
                     event.aggregate_id, event.run_id, event.tenant_id,
                     event.sequence, event.logical_time, event.causation_id,
-                    event.correlation_id, event.producer, dict(event.payload),
-                    event.previous_hash, event.event_hash, dict(event.metadata),
+                    event.correlation_id, event.producer,
+                    json.dumps(dict(event.payload), sort_keys=True, separators=(",", ":")),
+                    event.previous_hash, event.event_hash,
+                    json.dumps(dict(event.metadata), sort_keys=True, separators=(",", ":")),
                     event.timestamp,
                 ),
             )
