@@ -7,15 +7,16 @@ from apps.api.main import engine
 
 @pytest.fixture(autouse=True)
 def isolate_runtime_state():
-    """Reset test state without allowing destructive cleanup of a non-test database."""
+    """Reset test state; PostgreSQL cleanup requires explicit test authorization."""
     engine.state.clear()
-    database_url = os.getenv("DATABASE_URL", "").strip()
     if engine.ledger is not None:
+        if os.getenv("TINYD_ALLOW_DESTRUCTIVE_TEST_DB_CLEANUP") != "1":
+            raise RuntimeError(
+                "refusing PostgreSQL cleanup without explicit test-environment authorization"
+            )
+        database_url = os.getenv("DATABASE_URL", "").strip()
         if not database_url:
             raise RuntimeError("PostgreSQL ledger is configured but DATABASE_URL is unset")
-        normalized = database_url.lower()
-        if "test" not in normalized:
-            raise RuntimeError("refusing PostgreSQL cleanup unless DATABASE_URL identifies a test database")
         with engine.ledger._connect() as conn:
             conn.execute("DELETE FROM tinyd_events")
     os.environ.pop("TINYD_TENANT_TOKENS", None)
