@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from queue import Queue
+from queue import Empty, Queue
 from threading import Event, Thread
 from typing import Any
 
-from .event_journal import EventJournal
+try:
+    from .event_journal import EventJournal
+except ImportError:
+    from event_journal import EventJournal
 
 
 @dataclass(frozen=True, slots=True)
@@ -48,6 +51,8 @@ class RuntimeWorker:
         while not self._stop.is_set():
             try:
                 self.process_once(timeout=timeout)
+            except Empty:
+                continue
             except Exception:
                 if self._stop.is_set():
                     break
