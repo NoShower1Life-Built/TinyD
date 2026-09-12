@@ -5,7 +5,7 @@ import json
 from threading import RLock
 from typing import Any, Iterable
 
-from .events import EventEnvelope, event_hash, validate_event_chain
+from .events import EventEnvelope, event_hash, validate_event_chain, verify_event_hash
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +21,9 @@ class EventStore:
         raise NotImplementedError
 
     def read(self, tenant_id: str, aggregate_id: str, run_id: str) -> tuple[EventEnvelope, ...]:
+        raise NotImplementedError
+
+    def get_event(self, event_id: str) -> EventEnvelope:
         raise NotImplementedError
 
 
@@ -120,6 +123,28 @@ class PostgresEventStore(EventStore):
             events = tuple(_row_to_event(row) for row in cursor.fetchall())
         validate_event_chain(events)
         return events
+
+    def get_event(self, event_id: str) -> EventEnvelope:
+        if not event_id:
+            raise ValueError("event_id must not be empty")
+        with self._lock, self._connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT event_id, event_type, schema_version, aggregate_id, run_id,
+                       tenant_id, sequence, logical_time, causation_id, correlation_id,
+                       producer, payload, previous_hash, event_hash, metadata, timestamp
+                FROM tinyd_events
+                WHERE event_id = %s
+                """,
+                (event_id,),
+            )
+            row = cursor.fetchone()
+        if row is None:
+            raise KeyError(f"event not found: {event_id}")
+        event = _row_to_event(row)
+        if not verify_event_hash(event):
+            raise ValueError("authoritative event hash verification failed")
+        return event
 
 
 DDL = """
