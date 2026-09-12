@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from threading import Event, Thread
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from uuid import UUID
 
 try:
@@ -16,6 +16,17 @@ except ImportError:
 
 HeartbeatConnectionFactory = Callable[[], Any]
 EventResolver = Callable[[WorkItem], Any]
+FailureStatus = Literal["RECORDED", "LEASE_LOST", "RECORDING_FAILED"]
+
+
+@dataclass(frozen=True, slots=True)
+class FailureRecordOutcome:
+    status: FailureStatus
+    work_id: UUID
+    event_id: str
+    primary_error: str
+    recording_error: str | None
+    recovery: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -27,7 +38,7 @@ class WorkerResult:
 
 
 class RuntimeWorker:
-    """Durable worker with an independently owned PostgreSQL heartbeat connection."""
+    """Durable worker with isolated heartbeat and explicit failure outcomes."""
 
     def __init__(self, scheduler: DurableScheduler, journal: EventJournal, *, worker_id: str, lease_duration: timedelta, heartbeat_connection_factory: HeartbeatConnectionFactory, max_attempts: int = 3, retry_delay: timedelta = timedelta(seconds=1), heartbeat_interval: timedelta | None = None) -> None:
         if not worker_id:
@@ -52,8 +63,15 @@ class RuntimeWorker:
         self.retry_delay = retry_delay
         self.heartbeat_interval = interval
         self._stop = Event()
+        self._last_failure_outcome: FailureRecordOutcome | None = None
+
+    @property
+    def last_failure_outcome(self) -> FailureRecordOutcome | None:
+        """Most recent durable failure-recording outcome for this worker."""
+        return self._last_failure_outcome
 
     def process_once(self) -> WorkerResult | None:
+        self._last_failure_outcome = None
         work = self.scheduler.claim(self.worker_id, lease_duration=self.lease_duration)
         if work is None:
             return None
@@ -76,7 +94,12 @@ class RuntimeWorker:
                 raise RuntimeError("worker lease was lost before completion")
             return WorkerResult(work.work_id, work.event_id, True, inserted)
         except Exception as exc:
-            self._record_failure(work, exc)
+            outcome = self._record_failure(work, exc)
+            self._last_failure_outcome = outcome
+            if outcome.status == "RECORDING_FAILED":
+                exc.add_note(f"durable failure recording failed: {outcome.recording_error}")
+            elif outcome.status == "LEASE_LOST":
+                exc.add_note("durable failure recording was fenced by the current lease state; lease expiry/reclamation is the recovery path")
             raise
         finally:
             heartbeat_stop.set()
@@ -107,11 +130,42 @@ class RuntimeWorker:
                 except Exception:
                     pass
 
-    def _record_failure(self, work: WorkItem, exc: Exception) -> None:
+    def _record_failure(self, work: WorkItem, exc: Exception) -> FailureRecordOutcome:
         try:
-            self.scheduler.fail(work.work_id, self.worker_id, work.lease_token, str(exc), retry_at=datetime.now(timezone.utc) + self.retry_delay, max_attempts=self.max_attempts)
-        except Exception:
-            return
+            recorded = self.scheduler.fail(
+                work.work_id,
+                self.worker_id,
+                work.lease_token,
+                str(exc),
+                retry_at=datetime.now(timezone.utc) + self.retry_delay,
+                max_attempts=self.max_attempts,
+            )
+        except Exception as recording_error:
+            return FailureRecordOutcome(
+                status="RECORDING_FAILED",
+                work_id=work.work_id,
+                event_id=work.event_id,
+                primary_error=str(exc),
+                recording_error=str(recording_error),
+                recovery="lease_expiry_or_reclamation",
+            )
+        if not recorded:
+            return FailureRecordOutcome(
+                status="LEASE_LOST",
+                work_id=work.work_id,
+                event_id=work.event_id,
+                primary_error=str(exc),
+                recording_error=None,
+                recovery="lease_expiry_or_reclamation",
+            )
+        return FailureRecordOutcome(
+            status="RECORDED",
+            work_id=work.work_id,
+            event_id=work.event_id,
+            primary_error=str(exc),
+            recording_error=None,
+            recovery="durable_retry_or_terminal_failure",
+        )
 
     @staticmethod
     def _validate_authoritative_event(event: Any, work: WorkItem) -> None:
