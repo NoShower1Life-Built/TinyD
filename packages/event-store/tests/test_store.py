@@ -34,7 +34,10 @@ class FakeCursor:
         normalized = " ".join(sql.split())
         if normalized.startswith("SELECT pg_advisory_xact_lock"):
             return
-        if normalized.startswith("SELECT event_id"):
+        if normalized.startswith("SELECT event_id, event_type"):
+            stream = sorted((e for e in self.connection.inserted if (e.tenant_id, e.aggregate_id, e.run_id) == params), key=lambda e: e.sequence)
+            self.rows = [tuple([e.event_id,e.event_type,e.schema_version,e.aggregate_id,e.run_id,e.tenant_id,e.sequence,e.logical_time,e.causation_id,e.correlation_id,e.producer,e.payload,e.previous_hash,e.event_hash,e.metadata,e.timestamp]) for e in stream]
+        elif normalized.startswith("SELECT event_id"):
             found = next((e for e in self.connection.inserted if e.event_id == params[0]), None)
             self.rows = [(found.event_id, found.event_hash, found.sequence, found.tenant_id, found.aggregate_id, found.run_id)] if found else []
         elif normalized.startswith("SELECT event_hash"):
@@ -49,9 +52,6 @@ class FakeCursor:
                 causation_id=values[8], correlation_id=values[9], producer=values[10], payload=values[11],
                 previous_hash=values[12], event_hash=values[13], metadata=values[14],
                 timestamp=values[15].isoformat() if hasattr(values[15], "isoformat") else values[15]))
-        elif normalized.startswith("SELECT event_id, event_type"):
-            stream = sorted((e for e in self.connection.inserted if (e.tenant_id, e.aggregate_id, e.run_id) == params), key=lambda e: e.sequence)
-            self.rows = [tuple([e.event_id,e.event_type,e.schema_version,e.aggregate_id,e.run_id,e.tenant_id,e.sequence,e.logical_time,e.causation_id,e.correlation_id,e.producer,e.payload,e.previous_hash,e.event_hash,e.metadata,e.timestamp]) for e in stream]
 
     def fetchone(self): return self.rows[0] if self.rows else None
     def fetchall(self): return list(self.rows)
