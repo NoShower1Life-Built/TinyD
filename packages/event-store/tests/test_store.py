@@ -1,9 +1,13 @@
 from datetime import datetime, timezone
+import sys
+from pathlib import Path
 
 import pytest
 
-from packages.event_store.src.events import EventEnvelope, event_hash
-from packages.event_store.src.store import PostgresEventStore
+sys.path.insert(0, str(Path(__file__).parents[1]))
+
+from src.events import EventEnvelope, event_hash
+from src.store import PostgresEventStore
 
 
 def make_event(sequence=0, previous_hash=None, event_id=None, payload=None):
@@ -31,8 +35,7 @@ class FakeCursor:
         if normalized.startswith("SELECT pg_advisory_xact_lock"):
             return
         if normalized.startswith("SELECT event_id"):
-            event_id = params[0]
-            found = next((e for e in self.connection.inserted if e.event_id == event_id), None)
+            found = next((e for e in self.connection.inserted if e.event_id == params[0]), None)
             self.rows = [(found.event_id, found.event_hash, found.sequence, found.tenant_id, found.aggregate_id, found.run_id)] if found else []
         elif normalized.startswith("SELECT event_hash"):
             stream = [e for e in self.connection.inserted if (e.tenant_id, e.aggregate_id, e.run_id) == params]
@@ -41,11 +44,11 @@ class FakeCursor:
         elif normalized.startswith("INSERT INTO"):
             values = params
             self.connection.inserted.append(EventEnvelope(
-                event_id=values[0], event_type=values[1], schema_version=values[2],
-                aggregate_id=values[3], run_id=values[4], tenant_id=values[5], sequence=values[6],
-                logical_time=values[7], causation_id=values[8], correlation_id=values[9],
-                producer=values[10], payload=values[11], previous_hash=values[12],
-                event_hash=values[13], metadata=values[14], timestamp=values[15].isoformat() if hasattr(values[15], "isoformat") else values[15]))
+                event_id=values[0], event_type=values[1], schema_version=values[2], aggregate_id=values[3],
+                run_id=values[4], tenant_id=values[5], sequence=values[6], logical_time=values[7],
+                causation_id=values[8], correlation_id=values[9], producer=values[10], payload=values[11],
+                previous_hash=values[12], event_hash=values[13], metadata=values[14],
+                timestamp=values[15].isoformat() if hasattr(values[15], "isoformat") else values[15]))
         elif normalized.startswith("SELECT event_id, event_type"):
             stream = sorted((e for e in self.connection.inserted if (e.tenant_id, e.aggregate_id, e.run_id) == params), key=lambda e: e.sequence)
             self.rows = [tuple([e.event_id,e.event_type,e.schema_version,e.aggregate_id,e.run_id,e.tenant_id,e.sequence,e.logical_time,e.causation_id,e.correlation_id,e.producer,e.payload,e.previous_hash,e.event_hash,e.metadata,e.timestamp]) for e in stream]
