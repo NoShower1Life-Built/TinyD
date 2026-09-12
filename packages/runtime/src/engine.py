@@ -1,17 +1,24 @@
-from dataclasses import dataclass, field
+from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import Any
+
+from .event_journal import EventJournal
 
 
 @dataclass
 class RuntimeEngine:
-    """Minimal deterministic execution runtime foundation."""
+    """Deterministic runtime whose authoritative state boundary is the journal."""
 
-    state: dict[str, Any] = field(default_factory=dict)
+    journal: EventJournal
 
-    def execute(self, event: dict[str, Any]) -> dict[str, Any]:
-        event_id = event.get("id")
-        self.state[event_id] = event
-        return {"status": "accepted", "event_id": event_id}
+    def execute(self, event: Any) -> dict[str, Any]:
+        result = self.journal.append(event)
+        return {
+            "status": "accepted" if result.inserted else "already_recorded",
+            "event_id": event.event_id,
+            "inserted": result.inserted,
+        }
 
-    def snapshot(self) -> dict[str, Any]:
-        return dict(self.state)
+    def load_stream(self, tenant_id: str, aggregate_id: str, run_id: str) -> tuple[Any, ...]:
+        return self.journal.load(tenant_id, aggregate_id, run_id)
