@@ -342,6 +342,7 @@ def test_durable_worker_failure_is_persisted_and_retries():
         journal = EventJournal(PostgresEventStore(connection))
         scheduler = DurableScheduler(connection)
         first = make_event()
+        assert journal.append(first).inserted is True
         submitted = scheduler.submit(first)
         failing = worker_for(
             scheduler, journal,
@@ -358,7 +359,7 @@ def test_durable_worker_failure_is_persisted_and_retries():
         result = worker_for(scheduler, journal, worker_id="worker-b", resolver=lambda work: first, max_attempts=2).process_once()
         assert result is not None
         assert result.completed is True
-        assert result.appended is True
+        assert result.appended is False
         with connection.cursor() as cursor:
             cursor.execute("SELECT status, attempt_count, last_error FROM tinyd_work_items WHERE work_id = %s", (str(submitted.work_id),))
             assert cursor.fetchone() == ("COMPLETED", 2, None)
@@ -374,6 +375,7 @@ def test_durable_worker_lease_loss_is_detected_after_append():
         journal = EventJournal(PostgresEventStore(connection))
         scheduler = DurableScheduler(connection)
         first = make_event()
+        assert journal.append(first).inserted is True
         submitted = scheduler.submit(first)
 
         class LeaseStealingJournal:
