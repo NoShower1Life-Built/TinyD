@@ -1,0 +1,16 @@
+from typing import NewType
+
+TenantId = NewType("TenantId", str)
+AgentId = NewType("AgentId", str)
+ConversationId = NewType("ConversationId", str)
+RunId = NewType("RunId", str)
+TaskId = NewType("TaskId", str)
+StepId = NewType("StepId", str)
+EventId = NewType("EventId", str)
+CommandId = NewType("CommandId", str)
+CorrelationId = NewType("CorrelationId", str)
+CausationId = NewType("CausationId", str)
+CapabilityId = NewType("CapabilityId", str)
+ArtifactId = NewType("ArtifactId", str)
+PolicyId = NewType("PolicyId", str)
+VerificationId = NewType("VerificationId", str)
