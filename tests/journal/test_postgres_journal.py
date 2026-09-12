@@ -1,4 +1,6 @@
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from uuid import UUID, uuid4
 
 import pytest
@@ -34,9 +36,10 @@ def make_event(
     aggregate_id: UUID,
     sequence: int,
     previous_digest: str | None = None,
+    event_id: UUID | None = None,
 ) -> EventEnvelope:
     event = EventEnvelope(
-        event_id=uuid4(),
+        event_id=event_id or uuid4(),
         event_type="run.requested",
         event_version=1,
         tenant_id=tenant_id,
@@ -114,6 +117,29 @@ def test_event_id_is_idempotent_and_collision_fails_closed(journal):
     collision = event.model_copy(update={"payload": {"intent": "different"}})
     with pytest.raises(EventIntegrityError, match="event id collision"):
         journal.append(collision)
+
+
+def test_concurrent_identical_event_id_is_idempotent(journal):
+    tenant_id = uuid4()
+    aggregate_id = uuid4()
+    event = make_event(
+        journal,
+        tenant_id=tenant_id,
+        aggregate_id=aggregate_id,
+        sequence=1,
+        event_id=uuid4(),
+    )
+    start = Barrier(2)
+
+    def append_concurrently() -> EventEnvelope:
+        start.wait()
+        return journal.append(event)
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: append_concurrently(), range(2)))
+
+    assert results == [event, event]
+    assert journal.history(tenant_id, "run", aggregate_id) == [event]
 
 
 def test_tenant_history_isolation(journal):
