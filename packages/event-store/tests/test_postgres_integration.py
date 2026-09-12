@@ -306,5 +306,92 @@ def test_durable_scheduler_worker_persists_through_event_journal_to_postgres():
         assert result.completed is True
         assert result.appended is False
         assert journal.load("tenant-1", "aggregate-1", "run-1") == (first,)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status, attempt_count FROM tinyd_work_items WHERE work_id = %s", (str(result.work_id),))
+            assert cursor.fetchone() == ("COMPLETED", 1)
+            cursor.execute("SELECT count(*) FROM tinyd_events")
+            assert cursor.fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+def test_durable_worker_idempotent_append_completes_existing_event():
+    connection = connect()
+    try:
+        journal = EventJournal(PostgresEventStore(connection))
+        scheduler = DurableScheduler(connection)
+        first = make_event()
+        assert journal.append(first).inserted is True
+        submitted = scheduler.submit(first)
+        result = worker_for(scheduler, journal, resolver=lambda work: first).process_once()
+        assert result is not None
+        assert result.completed is True
+        assert result.appended is False
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status, attempt_count FROM tinyd_work_items WHERE work_id = %s", (str(submitted.work_id),))
+            assert cursor.fetchone() == ("COMPLETED", 1)
+            cursor.execute("SELECT count(*) FROM tinyd_events")
+            assert cursor.fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+def test_durable_worker_failure_is_persisted_and_retries():
+    connection = connect()
+    try:
+        journal = EventJournal(PostgresEventStore(connection))
+        scheduler = DurableScheduler(connection)
+        first = make_event()
+        submitted = scheduler.submit(first)
+        failing = worker_for(
+            scheduler, journal,
+            resolver=lambda work: (_ for _ in ()).throw(RuntimeError("resolver unavailable")),
+            max_attempts=2,
+        )
+        with pytest.raises(RuntimeError, match="resolver unavailable"):
+            failing.process_once()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status, attempt_count, last_error FROM tinyd_work_items WHERE work_id = %s", (str(submitted.work_id),))
+            assert cursor.fetchone() == ("PENDING", 1, "resolver unavailable")
+            cursor.execute("UPDATE tinyd_work_items SET available_at = %s WHERE work_id = %s", (datetime.now(timezone.utc) - timedelta(seconds=1), str(submitted.work_id)))
+        connection.commit()
+        result = worker_for(scheduler, journal, worker_id="worker-b", resolver=lambda work: first, max_attempts=2).process_once()
+        assert result is not None
+        assert result.completed is True
+        assert result.appended is True
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status, attempt_count, last_error FROM tinyd_work_items WHERE work_id = %s", (str(submitted.work_id),))
+            assert cursor.fetchone() == ("COMPLETED", 2, None)
+            cursor.execute("SELECT count(*) FROM tinyd_events")
+            assert cursor.fetchone()[0] == 1
+    finally:
+        connection.close()
+
+
+def test_durable_worker_lease_loss_is_detected_after_append():
+    connection = connect()
+    try:
+        journal = EventJournal(PostgresEventStore(connection))
+        scheduler = DurableScheduler(connection)
+        first = make_event()
+        submitted = scheduler.submit(first)
+
+        class LeaseStealingJournal:
+            def append(self, event):
+                result = journal.append(event)
+                with connection.cursor() as cursor:
+                    cursor.execute("UPDATE tinyd_work_items SET lease_expires_at = %s WHERE work_id = %s", (datetime.now(timezone.utc) - timedelta(seconds=1), str(submitted.work_id)))
+                connection.commit()
+                assert scheduler.claim("worker-b", lease_duration=timedelta(seconds=30)) is not None
+                return result
+
+        worker = worker_for(scheduler, LeaseStealingJournal(), resolver=lambda work: first, max_attempts=2)
+        with pytest.raises(RuntimeError, match="lease was lost"):
+            worker.process_once()
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT status, lease_owner, attempt_count FROM tinyd_work_items WHERE work_id = %s", (str(submitted.work_id),))
+            assert cursor.fetchone() == ("LEASED", "worker-b", 2)
+            cursor.execute("SELECT count(*) FROM tinyd_events")
+            assert cursor.fetchone()[0] == 1
     finally:
         connection.close()
