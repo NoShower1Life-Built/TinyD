@@ -281,13 +281,12 @@ def test_runtime_event_journal_uses_postgres_as_authoritative_boundary():
         connection.close()
 
 
-def worker_for(scheduler, journal, worker_id="worker-a", resolver=None, max_attempts=3):
+def worker_for(scheduler, journal, worker_id="worker-a", max_attempts=3):
     return RuntimeWorker(
         scheduler=scheduler,
         journal=journal,
         worker_id=worker_id,
         lease_duration=timedelta(seconds=30),
-        event_resolver=resolver or (lambda work: first),
         max_attempts=max_attempts,
         retry_delay=timedelta(seconds=0),
     )
@@ -301,7 +300,7 @@ def test_durable_scheduler_worker_persists_through_event_journal_to_postgres():
         first = make_event()
         assert journal.append(first).inserted is True
         scheduler.submit(first)
-        result = worker_for(scheduler, journal, resolver=lambda work: first).process_once()
+        result = worker_for(scheduler, journal).process_once()
         assert result is not None
         assert result.completed is True
         assert result.appended is False
@@ -323,7 +322,7 @@ def test_durable_worker_idempotent_append_completes_existing_event():
         first = make_event()
         assert journal.append(first).inserted is True
         submitted = scheduler.submit(first)
-        result = worker_for(scheduler, journal, resolver=lambda work: first).process_once()
+        result = worker_for(scheduler, journal).process_once()
         assert result is not None
         assert result.completed is True
         assert result.appended is False
@@ -344,11 +343,12 @@ def test_durable_worker_failure_is_persisted_and_retries():
         first = make_event()
         assert journal.append(first).inserted is True
         submitted = scheduler.submit(first)
-        failing = worker_for(
-            scheduler, journal,
-            resolver=lambda work: (_ for _ in ()).throw(RuntimeError("resolver unavailable")),
-            max_attempts=2,
-        )
+
+        class FailingJournal:
+            def load_event(self, event_id):
+                raise RuntimeError("resolver unavailable")
+
+        failing = worker_for(scheduler, FailingJournal(), max_attempts=2)
         with pytest.raises(RuntimeError, match="resolver unavailable"):
             failing.process_once()
         with connection.cursor() as cursor:
@@ -356,7 +356,7 @@ def test_durable_worker_failure_is_persisted_and_retries():
             assert cursor.fetchone() == ("PENDING", 1, "resolver unavailable")
             cursor.execute("UPDATE tinyd_work_items SET available_at = %s WHERE work_id = %s", (datetime.now(timezone.utc) - timedelta(seconds=1), str(submitted.work_id)))
         connection.commit()
-        result = worker_for(scheduler, journal, worker_id="worker-b", resolver=lambda work: first, max_attempts=2).process_once()
+        result = worker_for(scheduler, journal, worker_id="worker-b", max_attempts=2).process_once()
         assert result is not None
         assert result.completed is True
         assert result.appended is False
@@ -379,6 +379,9 @@ def test_durable_worker_lease_loss_is_detected_after_append():
         submitted = scheduler.submit(first)
 
         class LeaseStealingJournal:
+            def load_event(self, event_id):
+                return first
+
             def append(self, event):
                 result = journal.append(event)
                 with connection.cursor() as cursor:
@@ -387,7 +390,7 @@ def test_durable_worker_lease_loss_is_detected_after_append():
                 assert scheduler.claim("worker-b", lease_duration=timedelta(seconds=30)) is not None
                 return result
 
-        worker = worker_for(scheduler, LeaseStealingJournal(), resolver=lambda work: first, max_attempts=2)
+        worker = worker_for(scheduler, LeaseStealingJournal(), max_attempts=2)
         with pytest.raises(RuntimeError, match="lease was lost"):
             worker.process_once()
         with connection.cursor() as cursor:
