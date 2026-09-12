@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import struct
 from typing import Any
 from uuid import UUID
 
@@ -109,6 +110,11 @@ class PostgresEventJournal:
     def _event_from_row(row: dict[str, Any]) -> EventEnvelope:
         return EventEnvelope.model_validate(row["event"])
 
+    @staticmethod
+    def _advisory_lock_key(event_id: UUID) -> tuple[int, int]:
+        """Map the complete UUID to PostgreSQL's two-int advisory-lock key."""
+        return struct.unpack(">ii", event_id.bytes[:8]), struct.unpack(">ii", event_id.bytes[8:])
+
     def append(self, event: EventEnvelope) -> EventEnvelope:
         if not isinstance(event.tenant_id, UUID):
             raise EventTenantError("tenant_id is required")
@@ -117,8 +123,14 @@ class PostgresEventJournal:
 
         with self._connect() as conn:
             with conn.transaction():
+                lock_left, lock_right = self._advisory_lock_key(event.event_id)
+                conn.execute(
+                    "SELECT pg_advisory_xact_lock(%s, %s)",
+                    (lock_left, lock_right),
+                )
+
                 existing = conn.execute(
-                    "SELECT event FROM tinyd_event_journal WHERE event_id = %s FOR UPDATE",
+                    "SELECT event FROM tinyd_event_journal WHERE event_id = %s",
                     (event.event_id,),
                 ).fetchone()
                 if existing is not None:
