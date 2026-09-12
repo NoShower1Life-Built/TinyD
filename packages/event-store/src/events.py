@@ -29,36 +29,29 @@ class EventEnvelope:
     previous_hash: str | None
     event_hash: str
     metadata: Mapping[str, Any] = field(default_factory=dict)
-    timestamp: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat()
-    )
+    timestamp: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
     def __post_init__(self) -> None:
+        required = {
+            "event_id": self.event_id,
+            "event_type": self.event_type,
+            "schema_version": self.schema_version,
+            "aggregate_id": self.aggregate_id,
+            "run_id": self.run_id,
+            "tenant_id": self.tenant_id,
+            "correlation_id": self.correlation_id,
+            "producer": self.producer,
+            "event_hash": self.event_hash,
+        }
+        for name, value in required.items():
+            if not value:
+                raise ValueError(f"{name} is required")
         if self.sequence < 0:
             raise ValueError("sequence must be non-negative")
         if self.logical_time < 0:
             raise ValueError("logical_time must be non-negative")
-        if not self.event_id:
-            raise ValueError("event_id is required")
-        if not self.event_type:
-            raise ValueError("event_type is required")
-        if not self.schema_version:
-            raise ValueError("schema_version is required")
-        if not self.aggregate_id:
-            raise ValueError("aggregate_id is required")
-        if not self.run_id:
-            raise ValueError("run_id is required")
-        if not self.tenant_id:
-            raise ValueError("tenant_id is required")
-        if not self.correlation_id:
-            raise ValueError("correlation_id is required")
-        if not self.producer:
-            raise ValueError("producer is required")
-        if not self.event_hash:
-            raise ValueError("event_hash is required")
 
     def without_hash(self) -> dict[str, Any]:
-        """Return the canonical hash input as plain Python data."""
         return {
             "event_id": self.event_id,
             "event_type": self.event_type,
