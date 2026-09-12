@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from threading import RLock
+from typing import Any, Iterable
+
+from .events import EventEnvelope, event_hash, validate_event_chain
+
+
+@dataclass(frozen=True, slots=True)
+class AppendResult:
+    event: EventEnvelope
+    inserted: bool
+
+
+class EventStore:
+    """Authoritative event-store interface.
+
+    The storage backend is injected so the integrity/idempotency contract is
+    independent of the database driver. ``PostgresEventStore`` supplies the
+    production SQL implementation below.
+    """
+
+    def append(self, event: EventEnvelope) -> AppendResult:
+        raise NotImplementedError
+
+    def read(self, tenant_id: str, aggregate_id: str, run_id: str) -> tuple[EventEnvelope, ...]:
+        raise NotImplementedError
+
+
+class PostgresEventStore(EventStore):
+    """PostgreSQL event store using one transaction per append/read operation."""
+
+    def __init__(self, connection: Any) -> None:
+        self._connection = connection
+        self._lock = RLock()
+
+    def append(self, event: EventEnvelope) -> AppendResult:
+        if event_hash(event) != event.event_hash:
+            raise ValueError("event hash does not match canonical event")
+
+        with self._lock, self._connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT event_id, event_hash, sequence, tenant_id, aggregate_id, run_id
+                FROM tinyd_events
+                WHERE event_id = %s
+                FOR UPDATE
+                """,
+                (event.event_id,),
+            )
+            existing = cursor.fetchone()
+            if existing is not None:
+                if existing[1] != event.event_hash:
+                    raise ValueError("event_id already exists with different event content")
+                if (
+                    existing[2] != event.sequence
+                    or existing[3] != event.tenant_id
+                    or existing[4] != event.aggregate_id
+                    or existing[5] != event.run_id
+                ):
+                    raise ValueError("event_id already exists with conflicting event identity")
+                self._connection.commit()
+                return AppendResult(event=event, inserted=False)
+
+            cursor.execute(
+                """
+                SELECT event_hash, sequence, tenant_id, aggregate_id, run_id
+                FROM tinyd_events
+                WHERE tenant_id = %s AND aggregate_id = %s AND run_id = %s
+                ORDER BY sequence DESC
+                LIMIT 1
+                FOR UPDATE
+                """,
+                (event.tenant_id, event.aggregate_id, event.run_id),
+            )
+            previous = cursor.fetchone()
+            if previous is None:
+                if event.sequence != 0 or event.previous_hash is not None:
+                    raise ValueError("first event must start at sequence 0 without previous_hash")
+            else:
+                previous_hash, previous_sequence, *_ = previous
+                if event.sequence != previous_sequence + 1:
+                    raise ValueError("event sequence is not contiguous")
+                if event.previous_hash != previous_hash:
+                    raise ValueError("event previous_hash does not match chain head")
+
+            cursor.execute(
+                """
+                INSERT INTO tinyd_events (
+                    event_id, event_type, schema_version, aggregate_id, run_id,
+                    tenant_id, sequence, logical_time, causation_id, correlation_id,
+                    producer, payload, previous_hash, event_hash, metadata, timestamp
+                ) VALUES (
+                    %s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s
+                )
+                """,
+                (
+                    event.event_id, event.event_type, event.schema_version,
+                    event.aggregate_id, event.run_id, event.tenant_id,
+                    event.sequence, event.logical_time, event.causation_id,
+                    event.correlation_id, event.producer, dict(event.payload),
+                    event.previous_hash, event.event_hash, dict(event.metadata),
+                    event.timestamp,
+                ),
+            )
+            self._connection.commit()
+            return AppendResult(event=event, inserted=True)
+
+    def read(self, tenant_id: str, aggregate_id: str, run_id: str) -> tuple[EventEnvelope, ...]:
+        with self._lock, self._connection.cursor() as cursor:
+            cursor.execute(
+                """
+                SELECT event_id, event_type, schema_version, aggregate_id, run_id,
+                       tenant_id, sequence, logical_time, causation_id, correlation_id,
+                       producer, payload, previous_hash, event_hash, metadata, timestamp
+                FROM tinyd_events
+                WHERE tenant_id = %s AND aggregate_id = %s AND run_id = %s
+                ORDER BY sequence ASC
+                """,
+                (tenant_id, aggregate_id, run_id),
+            )
+            events = tuple(_row_to_event(row) for row in cursor.fetchall())
+        validate_event_chain(events)
+        return events
+
+
+DDL = """
+CREATE TABLE IF NOT EXISTS tinyd_events (
+    event_id TEXT PRIMARY KEY,
+    event_type TEXT NOT NULL,
+    schema_version TEXT NOT NULL,
+    aggregate_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    tenant_id TEXT NOT NULL,
+    sequence BIGINT NOT NULL CHECK (sequence >= 0),
+    logical_time BIGINT NOT NULL CHECK (logical_time >= 0),
+    causation_id TEXT,
+    correlation_id TEXT NOT NULL,
+    producer TEXT NOT NULL,
+    payload JSONB NOT NULL,
+    previous_hash CHAR(64),
+    event_hash CHAR(64) NOT NULL,
+    metadata JSONB NOT NULL,
+    timestamp TIMESTAMPTZ NOT NULL,
+    CONSTRAINT tinyd_events_chain_identity UNIQUE (tenant_id, aggregate_id, run_id, sequence),
+    CONSTRAINT tinyd_events_event_hash_unique UNIQUE (event_hash)
+);
+CREATE INDEX IF NOT EXISTS tinyd_events_stream_idx
+    ON tinyd_events (tenant_id, aggregate_id, run_id, sequence);
+"""
+
+
+def _row_to_event(row: Iterable[Any]) -> EventEnvelope:
+    values = tuple(row)
+    if len(values) != 16:
+        raise ValueError("invalid tinyd_events row")
+    return EventEnvelope(
+        event_id=values[0], event_type=values[1], schema_version=values[2],
+        aggregate_id=values[3], run_id=values[4], tenant_id=values[5],
+        sequence=values[6], logical_time=values[7], causation_id=values[8],
+        correlation_id=values[9], producer=values[10], payload=values[11],
+        previous_hash=values[12], event_hash=values[13], metadata=values[14],
+        timestamp=values[15].isoformat() if hasattr(values[15], "isoformat") else values[15],
+    )
