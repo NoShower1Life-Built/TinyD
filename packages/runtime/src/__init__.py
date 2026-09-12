@@ -3,17 +3,17 @@
 from .engine import RuntimeEngine
 from .event_journal import EventJournal, EventStorePort
 from .scheduler import DurableScheduler, SchedulableEvent, WorkItem
-from .worker import RuntimeScheduler, RuntimeWorker, ScheduledEvent, build_worker
+from .worker import EventResolver, RuntimeWorker, WorkerResult, build_worker
 
 __all__ = [
     "DurableScheduler",
     "EventJournal",
+    "EventResolver",
     "EventStorePort",
     "RuntimeEngine",
-    "RuntimeScheduler",
     "RuntimeWorker",
     "SchedulableEvent",
-    "ScheduledEvent",
     "WorkItem",
+    "WorkerResult",
     "build_worker",
 ]
