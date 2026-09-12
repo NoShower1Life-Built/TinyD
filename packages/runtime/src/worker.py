@@ -15,6 +15,7 @@ except ImportError:
 
 
 HeartbeatConnectionFactory = Callable[[], Any]
+EventResolver = Callable[[WorkItem], Any]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,18 +29,7 @@ class WorkerResult:
 class RuntimeWorker:
     """Durable worker with an independently owned PostgreSQL heartbeat connection."""
 
-    def __init__(
-        self,
-        scheduler: DurableScheduler,
-        journal: EventJournal,
-        *,
-        worker_id: str,
-        lease_duration: timedelta,
-        heartbeat_connection_factory: HeartbeatConnectionFactory,
-        max_attempts: int = 3,
-        retry_delay: timedelta = timedelta(seconds=1),
-        heartbeat_interval: timedelta | None = None,
-    ) -> None:
+    def __init__(self, scheduler: DurableScheduler, journal: EventJournal, *, worker_id: str, lease_duration: timedelta, heartbeat_connection_factory: HeartbeatConnectionFactory, max_attempts: int = 3, retry_delay: timedelta = timedelta(seconds=1), heartbeat_interval: timedelta | None = None) -> None:
         if not worker_id:
             raise ValueError("worker_id must not be empty")
         if lease_duration <= timedelta(0):
@@ -69,33 +59,22 @@ class RuntimeWorker:
             return None
         if work.lease_token is None:
             raise RuntimeError(f"claimed work item {work.work_id} has no lease token")
-
         lease_lost = Event()
         heartbeat_stop = Event()
-        heartbeat = Thread(
-            target=self._heartbeat,
-            args=(work.work_id, work.lease_token, heartbeat_stop, lease_lost),
-            daemon=True,
-        )
+        heartbeat = Thread(target=self._heartbeat, args=(work.work_id, work.lease_token, heartbeat_stop, lease_lost), daemon=True)
         heartbeat.start()
         try:
             event = self.journal.load_event(work.event_id)
             self._validate_authoritative_event(event, work)
             if lease_lost.is_set():
                 raise RuntimeError("worker lease was lost before event append")
-
             result = self.journal.append(event)
             inserted = getattr(result, "inserted", None)
             if inserted not in (True, False):
                 raise RuntimeError("event journal append returned an invalid result")
             if not self.scheduler.complete(work.work_id, self.worker_id, work.lease_token):
                 raise RuntimeError("worker lease was lost before completion")
-            return WorkerResult(
-                work_id=work.work_id,
-                event_id=work.event_id,
-                completed=True,
-                appended=inserted,
-            )
+            return WorkerResult(work.work_id, work.event_id, True, inserted)
         except Exception as exc:
             self._record_failure(work, exc)
             raise
@@ -112,12 +91,7 @@ class RuntimeWorker:
             scheduler = DurableScheduler(connection)
             while not stop.wait(self.heartbeat_interval.total_seconds()):
                 try:
-                    renewed = scheduler.renew(
-                        work_id,
-                        self.worker_id,
-                        lease_token,
-                        lease_duration=self.lease_duration,
-                    )
+                    renewed = scheduler.renew(work_id, self.worker_id, lease_token, lease_duration=self.lease_duration)
                 except Exception:
                     lease_lost.set()
                     return
@@ -135,17 +109,8 @@ class RuntimeWorker:
 
     def _record_failure(self, work: WorkItem, exc: Exception) -> None:
         try:
-            self.scheduler.fail(
-                work.work_id,
-                self.worker_id,
-                work.lease_token,
-                str(exc),
-                retry_at=datetime.now(timezone.utc) + self.retry_delay,
-                max_attempts=self.max_attempts,
-            )
+            self.scheduler.fail(work.work_id, self.worker_id, work.lease_token, str(exc), retry_at=datetime.now(timezone.utc) + self.retry_delay, max_attempts=self.max_attempts)
         except Exception:
-            # Preserve the primary processing failure. If failure recording is
-            # unavailable, lease expiry remains the durable recovery mechanism.
             return
 
     @staticmethod
@@ -179,24 +144,5 @@ class RuntimeWorker:
         self._stop.set()
 
 
-def build_worker(
-    scheduler: DurableScheduler,
-    journal: EventJournal,
-    *,
-    worker_id: str,
-    lease_duration: timedelta,
-    heartbeat_connection_factory: HeartbeatConnectionFactory,
-    max_attempts: int = 3,
-    retry_delay: timedelta = timedelta(seconds=1),
-    heartbeat_interval: timedelta | None = None,
-) -> RuntimeWorker:
-    return RuntimeWorker(
-        scheduler=scheduler,
-        journal=journal,
-        worker_id=worker_id,
-        lease_duration=lease_duration,
-        heartbeat_connection_factory=heartbeat_connection_factory,
-        max_attempts=max_attempts,
-        retry_delay=retry_delay,
-        heartbeat_interval=heartbeat_interval,
-    )
+def build_worker(scheduler: DurableScheduler, journal: EventJournal, *, worker_id: str, lease_duration: timedelta, heartbeat_connection_factory: HeartbeatConnectionFactory, max_attempts: int = 3, retry_delay: timedelta = timedelta(seconds=1), heartbeat_interval: timedelta | None = None) -> RuntimeWorker:
+    return RuntimeWorker(scheduler=scheduler, journal=journal, worker_id=worker_id, lease_duration=lease_duration, heartbeat_connection_factory=heartbeat_connection_factory, max_attempts=max_attempts, retry_delay=retry_delay, heartbeat_interval=heartbeat_interval)
