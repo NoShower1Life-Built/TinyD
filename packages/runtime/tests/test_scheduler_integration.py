@@ -24,15 +24,24 @@ if not DATABASE_URL:
 
 def load_module(name: str, path: Path) -> ModuleType:
     spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
     sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
 
-EVENTS = load_module("tinyd_scheduler_events", EVENT_STORE_SRC / "events.py")
-STORE = load_module("tinyd_scheduler_store", EVENT_STORE_SRC / "store.py")
+def load_event_store() -> tuple[ModuleType, ModuleType]:
+    package_name = "tinyd_event_store_testpkg"
+    package = ModuleType(package_name)
+    package.__path__ = [str(EVENT_STORE_SRC)]
+    sys.modules[package_name] = package
+    events = load_module(f"{package_name}.events", EVENT_STORE_SRC / "events.py")
+    store = load_module(f"{package_name}.store", EVENT_STORE_SRC / "store.py")
+    return events, store
+
+
+EVENTS, STORE = load_event_store()
 SCHEDULER = load_module("tinyd_scheduler", RUNTIME_SRC / "scheduler.py")
 EventEnvelope = EVENTS.EventEnvelope
 event_hash = EVENTS.event_hash
@@ -160,9 +169,10 @@ def test_stale_fenced_worker_cannot_complete():
 
 def test_concurrent_claim_allows_only_one_active_lease():
     reset_schema()
-    persist_event(make_event())
+    event = make_event()
+    persist_event(event)
     with connection() as conn:
-        DurableScheduler(conn).submit(make_event())
+        DurableScheduler(conn).submit(event)
 
     def claim(worker_id: str):
         with connection() as conn:
