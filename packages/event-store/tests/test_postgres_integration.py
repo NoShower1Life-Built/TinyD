@@ -14,9 +14,11 @@ from src.events import EventEnvelope, event_hash
 from src.store import DDL, PostgresEventStore
 
 _RUNTIME_JOURNAL_PATH = Path(__file__).parents[2] / "runtime" / "src" / "event_journal.py"
-_RUNTIME_JOURNAL_SPEC = importlib.util.spec_from_file_location("tinyd_runtime_event_journal", _RUNTIME_JOURNAL_PATH)
+_RUNTIME_JOURNAL_NAME = "tinyd_runtime_event_journal"
+_RUNTIME_JOURNAL_SPEC = importlib.util.spec_from_file_location(_RUNTIME_JOURNAL_NAME, _RUNTIME_JOURNAL_PATH)
 _RUNTIME_JOURNAL_MODULE = importlib.util.module_from_spec(_RUNTIME_JOURNAL_SPEC)
 assert _RUNTIME_JOURNAL_SPEC.loader is not None
+sys.modules[_RUNTIME_JOURNAL_NAME] = _RUNTIME_JOURNAL_MODULE
 _RUNTIME_JOURNAL_SPEC.loader.exec_module(_RUNTIME_JOURNAL_MODULE)
 EventJournal = _RUNTIME_JOURNAL_MODULE.EventJournal
 
