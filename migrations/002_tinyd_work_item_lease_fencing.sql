@@ -1,6 +1,11 @@
 ALTER TABLE tinyd_work_items
     ADD COLUMN IF NOT EXISTS lease_token UUID;
 
+UPDATE tinyd_work_items
+SET lease_token = gen_random_uuid()
+WHERE status = 'LEASED'
+  AND lease_token IS NULL;
+
 ALTER TABLE tinyd_work_items
     DROP CONSTRAINT IF EXISTS tinyd_work_items_lease_consistency;
 
