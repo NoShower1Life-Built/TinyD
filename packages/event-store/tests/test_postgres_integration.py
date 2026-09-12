@@ -156,7 +156,7 @@ def test_chain_tamper_is_detected_on_read():
                 ('{"node":"tampered"}', first.event_id),
             )
         connection.commit()
-        with pytest.raises(ValueError, match="hash does not match"):
+        with pytest.raises(ValueError, match="hash mismatch"):
             store.read("tenant-1", "aggregate-1", "run-1")
     finally:
         connection.close()
