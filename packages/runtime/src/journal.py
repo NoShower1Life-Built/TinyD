@@ -112,8 +112,9 @@ class PostgresEventJournal:
 
     @staticmethod
     def _advisory_lock_key(event_id: UUID) -> tuple[int, int]:
-        """Map the complete UUID to PostgreSQL's two-int advisory-lock key."""
-        return struct.unpack(">ii", event_id.bytes[:8]), struct.unpack(">ii", event_id.bytes[8:])
+        """Derive a stable PostgreSQL transaction-lock key from the event UUID."""
+        digest = hashlib.sha256(event_id.bytes).digest()
+        return struct.unpack(">ii", digest[:8])
 
     def append(self, event: EventEnvelope) -> EventEnvelope:
         if not isinstance(event.tenant_id, UUID):
