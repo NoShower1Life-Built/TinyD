@@ -148,6 +148,14 @@ CREATE INDEX IF NOT EXISTS tinyd_events_stream_idx
 """
 
 
+def _json_object(value: Any) -> dict[str, Any]:
+    if isinstance(value, str):
+        value = json.loads(value)
+    if not isinstance(value, dict):
+        raise ValueError("PostgreSQL JSONB field is not an object")
+    return value
+
+
 def _row_to_event(row: Iterable[Any]) -> EventEnvelope:
     values = tuple(row)
     if len(values) != 16:
@@ -156,7 +164,7 @@ def _row_to_event(row: Iterable[Any]) -> EventEnvelope:
         event_id=values[0], event_type=values[1], schema_version=values[2],
         aggregate_id=values[3], run_id=values[4], tenant_id=values[5],
         sequence=values[6], logical_time=values[7], causation_id=values[8],
-        correlation_id=values[9], producer=values[10], payload=values[11],
-        previous_hash=values[12], event_hash=values[13], metadata=values[14],
+        correlation_id=values[9], producer=values[10], payload=_json_object(values[11]),
+        previous_hash=values[12], event_hash=values[13], metadata=_json_object(values[14]),
         timestamp=values[15].isoformat() if hasattr(values[15], "isoformat") else values[15],
     )
