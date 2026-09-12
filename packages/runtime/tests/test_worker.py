@@ -9,6 +9,7 @@ import time
 
 import pytest
 
+import src.worker as worker_module
 from src.worker import RuntimeWorker
 
 
@@ -58,8 +59,7 @@ class FakeScheduler:
 
 
 class FakeConnection:
-    def __init__(self, scheduler):
-        self.scheduler = scheduler
+    def __init__(self):
         self.closed = False
 
     def close(self):
@@ -100,28 +100,17 @@ def make_event(work, **overrides):
     return SimpleNamespace(**values)
 
 
-def make_worker(scheduler, journal, *, heartbeat_scheduler=None, heartbeat_interval=timedelta(seconds=10)):
-    heartbeat_scheduler = heartbeat_scheduler or FakeScheduler()
-
-    def factory():
-        connection = FakeConnection(heartbeat_scheduler)
-        return connection
-
-    original = RuntimeWorker.__dict__["_heartbeat"]
-    worker = RuntimeWorker(
+def make_worker(scheduler, journal, *, heartbeat_interval=timedelta(seconds=10)):
+    return RuntimeWorker(
         scheduler=scheduler,
         journal=journal,
         worker_id="worker-a",
         lease_duration=timedelta(seconds=30),
-        heartbeat_connection_factory=factory,
+        heartbeat_connection_factory=lambda: FakeConnection(),
         max_attempts=3,
         retry_delay=timedelta(seconds=0),
         heartbeat_interval=heartbeat_interval,
     )
-    # Unit tests replace the production scheduler construction with a fake
-    # connection-compatible factory by binding the heartbeat method below.
-    worker._test_heartbeat_scheduler = heartbeat_scheduler
-    return worker
 
 
 def test_process_once_loads_authoritative_event_appends_and_completes(monkeypatch):
@@ -195,12 +184,21 @@ def test_lease_loss_after_append_is_failure_not_success(monkeypatch):
     assert scheduler.failed[0][2] == work.lease_token
 
 
-def test_heartbeat_uses_dedicated_connection_and_closes_it():
+def test_heartbeat_uses_dedicated_connection_and_closes_it(monkeypatch):
     work = make_work()
     primary_scheduler = FakeScheduler(work)
     heartbeat_scheduler = FakeScheduler()
-    connection = FakeConnection(heartbeat_scheduler)
+    connection = FakeConnection()
     connections = []
+
+    class FakeDurableScheduler:
+        def __init__(self, actual_connection):
+            assert actual_connection is connection
+
+        def renew(self, work_id, worker_id, lease_token, *, lease_duration):
+            return heartbeat_scheduler.renew(work_id, worker_id, lease_token, lease_duration=lease_duration)
+
+    monkeypatch.setattr(worker_module, "DurableScheduler", FakeDurableScheduler)
 
     def factory():
         connections.append(connection)
@@ -228,16 +226,25 @@ def test_heartbeat_uses_dedicated_connection_and_closes_it():
     assert connection.closed is True
 
 
-def test_heartbeat_lease_loss_is_signaled():
+def test_heartbeat_lease_loss_is_signaled(monkeypatch):
     work = make_work()
     primary_scheduler = FakeScheduler(work)
     heartbeat_scheduler = FakeScheduler(renew_result=False)
+
+    class FakeDurableScheduler:
+        def __init__(self, actual_connection):
+            assert actual_connection is not None
+
+        def renew(self, work_id, worker_id, lease_token, *, lease_duration):
+            return heartbeat_scheduler.renew(work_id, worker_id, lease_token, lease_duration=lease_duration)
+
+    monkeypatch.setattr(worker_module, "DurableScheduler", FakeDurableScheduler)
     worker = RuntimeWorker(
         scheduler=primary_scheduler,
         journal=FakeJournal(event=make_event(work)),
         worker_id="worker-a",
         lease_duration=timedelta(seconds=30),
-        heartbeat_connection_factory=lambda: FakeConnection(heartbeat_scheduler),
+        heartbeat_connection_factory=lambda: FakeConnection(),
         heartbeat_interval=timedelta(milliseconds=1),
     )
     stop = threading.Event()
