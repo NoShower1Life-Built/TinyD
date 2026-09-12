@@ -1,7 +1,6 @@
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
-import psycopg
 import pytest
 
 from packages.contracts.src.envelope import EventEnvelope, EventIntegrity
@@ -19,6 +18,8 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def journal() -> PostgresEventJournal:
+    if os.getenv("TINYD_ALLOW_DESTRUCTIVE_TEST_DB_CLEANUP") != "1":
+        pytest.skip("destructive PostgreSQL test cleanup is not explicitly authorized")
     instance = PostgresEventJournal(os.environ["DATABASE_URL"])
     with instance._connect() as conn:
         conn.execute("DELETE FROM tinyd_event_journal")
@@ -26,7 +27,14 @@ def journal() -> PostgresEventJournal:
     return instance
 
 
-def make_event(journal: PostgresEventJournal, *, tenant_id, aggregate_id, sequence, previous_digest=None):
+def make_event(
+    journal: PostgresEventJournal,
+    *,
+    tenant_id: UUID,
+    aggregate_id: UUID,
+    sequence: int,
+    previous_digest: str | None = None,
+) -> EventEnvelope:
     event = EventEnvelope(
         event_id=uuid4(),
         event_type="run.requested",
@@ -42,7 +50,9 @@ def make_event(journal: PostgresEventJournal, *, tenant_id, aggregate_id, sequen
         integrity=EventIntegrity(previous_digest=previous_digest, digest="pending"),
     )
     digest = journal.calculate_digest(event, previous_digest)
-    return event.model_copy(update={"integrity": EventIntegrity(previous_digest=previous_digest, digest=digest)})
+    return event.model_copy(
+        update={"integrity": EventIntegrity(previous_digest=previous_digest, digest=digest)}
+    )
 
 
 def test_append_assigns_authoritative_history_and_preserves_chain(journal):
