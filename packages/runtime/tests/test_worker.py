@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from datetime import timedelta
 from types import SimpleNamespace
 from uuid import UUID, uuid4
+import threading
+import time
 
 import pytest
 
@@ -55,6 +57,15 @@ class FakeScheduler:
         return self.renew_result
 
 
+class FakeConnection:
+    def __init__(self, scheduler):
+        self.scheduler = scheduler
+        self.closed = False
+
+    def close(self):
+        self.closed = True
+
+
 class FakeJournal:
     def __init__(self, event=None, result=None, error=None):
         self.event = event
@@ -89,23 +100,36 @@ def make_event(work, **overrides):
     return SimpleNamespace(**values)
 
 
-def make_worker(scheduler, journal, *, heartbeat_interval=timedelta(seconds=10)):
-    return RuntimeWorker(
+def make_worker(scheduler, journal, *, heartbeat_scheduler=None, heartbeat_interval=timedelta(seconds=10)):
+    heartbeat_scheduler = heartbeat_scheduler or FakeScheduler()
+
+    def factory():
+        connection = FakeConnection(heartbeat_scheduler)
+        return connection
+
+    original = RuntimeWorker.__dict__["_heartbeat"]
+    worker = RuntimeWorker(
         scheduler=scheduler,
         journal=journal,
         worker_id="worker-a",
         lease_duration=timedelta(seconds=30),
+        heartbeat_connection_factory=factory,
         max_attempts=3,
         retry_delay=timedelta(seconds=0),
         heartbeat_interval=heartbeat_interval,
     )
+    # Unit tests replace the production scheduler construction with a fake
+    # connection-compatible factory by binding the heartbeat method below.
+    worker._test_heartbeat_scheduler = heartbeat_scheduler
+    return worker
 
 
-def test_process_once_loads_authoritative_event_appends_and_completes():
+def test_process_once_loads_authoritative_event_appends_and_completes(monkeypatch):
     work = make_work()
     event = make_event(work)
     scheduler = FakeScheduler(work)
     journal = FakeJournal(event=event, result=Result(inserted=True))
+    monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, work_id, token, stop, lost: None)
     result = make_worker(scheduler, journal).process_once()
     assert result is not None
     assert result.completed is True
@@ -116,10 +140,11 @@ def test_process_once_loads_authoritative_event_appends_and_completes():
     assert scheduler.failed == []
 
 
-def test_duplicate_journal_append_is_successful_completion():
+def test_duplicate_journal_append_is_successful_completion(monkeypatch):
     work = make_work()
     scheduler = FakeScheduler(work)
     journal = FakeJournal(event=make_event(work), result=Result(inserted=False))
+    monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, work_id, token, stop, lost: None)
     result = make_worker(scheduler, journal).process_once()
     assert result is not None
     assert result.completed is True
@@ -127,74 +152,95 @@ def test_duplicate_journal_append_is_successful_completion():
     assert scheduler.completed[0][2] == work.lease_token
 
 
-def test_missing_authoritative_event_is_recorded_and_propagated():
+def test_missing_authoritative_event_is_recorded_and_propagated(monkeypatch):
     work = make_work()
     scheduler = FakeScheduler(work)
     journal = FakeJournal(event=None)
+    monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, work_id, token, stop, lost: None)
     with pytest.raises(RuntimeError, match="authoritative event"):
         make_worker(scheduler, journal).process_once()
     assert scheduler.failed[0][2] == work.lease_token
 
 
-def test_authoritative_event_identity_mismatch_is_rejected():
+def test_authoritative_event_identity_mismatch_is_rejected(monkeypatch):
     work = make_work()
     scheduler = FakeScheduler(work)
     journal = FakeJournal(event=make_event(work, tenant_id="other-tenant"))
+    monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, work_id, token, stop, lost: None)
     with pytest.raises(RuntimeError, match="tenant_id"):
         make_worker(scheduler, journal).process_once()
     assert journal.events == []
     assert len(scheduler.failed) == 1
 
 
-def test_append_failure_preserves_primary_error_when_failure_recording_fails():
+def test_append_failure_preserves_primary_error_when_failure_recording_fails(monkeypatch):
     work = make_work()
     scheduler = FakeScheduler(work, fail_error=RuntimeError("failure database unavailable"))
     journal = FakeJournal(event=make_event(work), error=RuntimeError("primary database unavailable"))
+    monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, work_id, token, stop, lost: None)
     with pytest.raises(RuntimeError, match="primary database unavailable"):
         make_worker(scheduler, journal).process_once()
     assert scheduler.completed == []
     assert scheduler.failed == []
 
 
-def test_lease_loss_after_append_is_failure_not_success():
+def test_lease_loss_after_append_is_failure_not_success(monkeypatch):
     work = make_work()
     scheduler = FakeScheduler(work, complete_result=False)
     journal = FakeJournal(event=make_event(work))
+    monkeypatch.setattr(RuntimeWorker, "_heartbeat", lambda self, work_id, token, stop, lost: None)
     with pytest.raises(RuntimeError, match="lease was lost"):
         make_worker(scheduler, journal).process_once()
     assert len(journal.events) == 1
     assert scheduler.failed[0][2] == work.lease_token
 
 
-def test_heartbeat_renews_current_fence():
+def test_heartbeat_uses_dedicated_connection_and_closes_it():
     work = make_work()
-    scheduler = FakeScheduler(work)
-    journal = FakeJournal(event=make_event(work))
-    worker = make_worker(scheduler, journal)
-    stop = __import__("threading").Event()
-    lost = __import__("threading").Event()
-    thread = __import__("threading").Thread(
-        target=worker._heartbeat,
-        args=(work.work_id, work.lease_token, stop, lost),
-        daemon=True,
+    primary_scheduler = FakeScheduler(work)
+    heartbeat_scheduler = FakeScheduler()
+    connection = FakeConnection(heartbeat_scheduler)
+    connections = []
+
+    def factory():
+        connections.append(connection)
+        return connection
+
+    worker = RuntimeWorker(
+        scheduler=primary_scheduler,
+        journal=FakeJournal(event=make_event(work)),
+        worker_id="worker-a",
+        lease_duration=timedelta(seconds=30),
+        heartbeat_connection_factory=factory,
+        heartbeat_interval=timedelta(milliseconds=1),
     )
-    worker.heartbeat_interval = timedelta(milliseconds=1)
+    stop = threading.Event()
+    lost = threading.Event()
+    thread = threading.Thread(target=worker._heartbeat, args=(work.work_id, work.lease_token, stop, lost), daemon=True)
     thread.start()
-    __import__("time").sleep(0.01)
+    time.sleep(0.01)
     stop.set()
     thread.join(timeout=1)
-    assert scheduler.renewed
-    assert scheduler.renewed[0][2] == work.lease_token
+    assert connections == [connection]
+    assert heartbeat_scheduler.renewed
+    assert heartbeat_scheduler.renewed[0][2] == work.lease_token
     assert not lost.is_set()
+    assert connection.closed is True
 
 
 def test_heartbeat_lease_loss_is_signaled():
     work = make_work()
-    scheduler = FakeScheduler(work, renew_result=False)
-    journal = FakeJournal(event=make_event(work))
-    worker = make_worker(scheduler, journal)
-    stop = __import__("threading").Event()
-    lost = __import__("threading").Event()
-    worker.heartbeat_interval = timedelta(milliseconds=1)
+    primary_scheduler = FakeScheduler(work)
+    heartbeat_scheduler = FakeScheduler(renew_result=False)
+    worker = RuntimeWorker(
+        scheduler=primary_scheduler,
+        journal=FakeJournal(event=make_event(work)),
+        worker_id="worker-a",
+        lease_duration=timedelta(seconds=30),
+        heartbeat_connection_factory=lambda: FakeConnection(heartbeat_scheduler),
+        heartbeat_interval=timedelta(milliseconds=1),
+    )
+    stop = threading.Event()
+    lost = threading.Event()
     worker._heartbeat(work.work_id, work.lease_token, stop, lost)
     assert lost.is_set()
