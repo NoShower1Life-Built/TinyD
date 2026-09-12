@@ -287,6 +287,7 @@ def worker_for(scheduler, journal, worker_id="worker-a", max_attempts=3):
         journal=journal,
         worker_id=worker_id,
         lease_duration=timedelta(seconds=30),
+        heartbeat_connection_factory=connect,
         max_attempts=max_attempts,
         retry_delay=timedelta(seconds=0),
     )
