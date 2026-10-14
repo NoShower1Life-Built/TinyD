@@ -1,3 +1,4 @@
+import base64
 import hashlib
 import json
 import os
@@ -135,9 +136,10 @@ def test_websocket_streams_persisted_events_only_for_authorized_tenant():
     )
     assert response.status_code == 201, response.text
 
+    browser_credential = base64.urlsafe_b64encode(token.encode()).decode().rstrip("=")
     with client.websocket_connect(
         f"/v1/agent/runs/{run_id}/events",
-        headers={"Authorization": f"Bearer {token}"},
+        subprotocols=["tinyd.events.v1", f"tinyd.bearer.{browser_credential}"],
     ) as websocket:
         event = websocket.receive_json()
         assert event["event_type"] == "run.requested"
