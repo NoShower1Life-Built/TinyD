@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import os
@@ -7,16 +8,17 @@ from datetime import datetime, timezone
 from typing import Any
 from uuid import NAMESPACE_URL, UUID, uuid5
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from apps.api.auth import Tenant, require_scope, require_tenant
+from apps.api.auth import Tenant, _token_map, require_scope, require_tenant
 from apps.api.billing import create_checkout_session, report_meter_event, verify_webhook_signature
 from apps.api.registry import get_package, list_packages, manifest_digest
 from packages.runtime.src.engine import RuntimeEngine
 from packages.runtime.src.ledger import PostgresEventLedger
 from packages.contracts.src.envelope import EventEnvelope, EventIntegrity
 from packages.runtime.src.journal import EventIntegrityError, EventSequenceConflict, PostgresEventJournal
+from packages.runtime.src.worker import DurableWorker
 
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
 _database_url = os.getenv("DATABASE_URL", "").strip()
@@ -157,6 +159,59 @@ def submit_agent_run(request: AgentRunRequest, tenant: Tenant = Depends(require_
         "tenant_id": tenant.id,
         "event": persisted.model_dump(mode="json"),
     }
+
+
+
+@app.websocket("/v1/agent/runs/{run_id}/events")
+async def agent_run_events(websocket: WebSocket, run_id: UUID, after_sequence: int = 0):
+    """Stream persisted run events over WebSocket; PostgreSQL journal remains authoritative."""
+    authorization = websocket.headers.get("authorization", "")
+    if not authorization.lower().startswith("bearer "):
+        await websocket.close(code=4401, reason="bearer token required")
+        return
+    token = authorization[7:].strip()
+    token_digest = hashlib.sha256(token.encode()).hexdigest()
+    identity = _token_map().get(token_digest)
+    if not isinstance(identity, dict):
+        await websocket.close(code=4401, reason="invalid tenant credentials")
+        return
+    scopes = identity.get("scopes", [])
+    tenant_id = identity.get("tenant_id")
+    if not isinstance(tenant_id, str) or not isinstance(scopes, list):
+        await websocket.close(code=4401, reason="invalid tenant credentials")
+        return
+    if "events:read" not in scopes:
+        await websocket.close(code=4403, reason="missing scope: events:read")
+        return
+    if event_journal is None:
+        await websocket.close(code=1013, reason="canonical PostgreSQL journal is not configured")
+        return
+    tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant_id.strip()}")
+    await websocket.accept()
+    cursor = max(0, after_sequence)
+    try:
+        while True:
+            history = event_journal.history(tenant_uuid, "run", run_id)
+            for event in history:
+                if event.sequence > cursor:
+                    await websocket.send_json(event.model_dump(mode="json"))
+                    cursor = event.sequence
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        return
+
+
+@app.post("/v1/agent/worker/run-once")
+def agent_worker_run_once(tenant: Tenant = Depends(require_tenant)):
+    """Run one durable queue item; scope is restricted to operational operators."""
+    require_scope(tenant, "workers:execute")
+    if event_journal is None:
+        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is not configured")
+    try:
+        result = DurableWorker(_database_url).run_once()
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail="worker execution failed") from exc
+    return {"status": "idle"} if result is None else result
 
 
 @app.get("/v1/marketplace/packages")
