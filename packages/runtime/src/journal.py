@@ -278,3 +278,31 @@ class PostgresEventJournal:
                 (tenant_id,),
             ).fetchall()
             return [self._event_from_row(row) for row in rows]
+
+def history_after(
+        self,
+        tenant_id: UUID,
+        aggregate_type: str,
+        aggregate_id: UUID,
+        after_sequence: int,
+        limit: int = 100,
+    ) -> list[EventEnvelope]:
+        """Read a bounded page of authoritative aggregate events after a cursor."""
+        if after_sequence < 0:
+            raise ValueError("after_sequence must be non-negative")
+        if not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT event
+                FROM tinyd_event_journal
+                WHERE tenant_id = %s AND aggregate_type = %s
+                  AND aggregate_id = %s AND sequence > %s
+                ORDER BY sequence ASC
+                LIMIT %s
+                """,
+                (tenant_id, aggregate_type, aggregate_id, after_sequence, limit),
+            ).fetchall()
+            return [self._event_from_row(row) for row in rows]
+
