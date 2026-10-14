@@ -35,6 +35,11 @@ def isolate_ephemeral_postgres_database():
             "SELECT to_regclass('public.tinyd_event_journal')"
         ).fetchone()[0]
         if journal_exists:
+            worker_tasks_exists = conn.execute(
+                "SELECT to_regclass('public.tinyd_worker_tasks')"
+            ).fetchone()[0]
+            if worker_tasks_exists:
+                conn.execute("TRUNCATE TABLE tinyd_worker_tasks")
             conn.execute(
                 "TRUNCATE TABLE tinyd_event_journal, tinyd_event_journal_heads"
             )
