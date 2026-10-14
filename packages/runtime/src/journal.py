@@ -130,13 +130,32 @@ class PostgresEventJournal:
                     (lock_left, lock_right),
                 )
 
+                supplied_digest = self.calculate_digest(
+                    event, event.integrity.previous_digest
+                )
+                if event.integrity.digest != supplied_digest:
+                    raise EventIntegrityError(
+                        "event digest does not match canonical event content"
+                    )
+
                 existing = conn.execute(
                     "SELECT event FROM tinyd_event_journal WHERE event_id = %s",
                     (event.event_id,),
                 ).fetchone()
                 if existing is not None:
                     persisted = self._event_from_row(existing)
-                    if persisted.model_dump(mode="json") != event.model_dump(mode="json"):
+                    persisted_body = persisted.model_dump(mode="json")
+                    supplied_body = event.model_dump(mode="json")
+                    persisted_body.pop("occurred_at", None)
+                    supplied_body.pop("occurred_at", None)
+                    persisted_integrity = persisted_body.pop("integrity")
+                    supplied_integrity = supplied_body.pop("integrity")
+                    same_semantic_event = (
+                        persisted_body == supplied_body
+                        and persisted_integrity.get("previous_digest")
+                        == supplied_integrity.get("previous_digest")
+                    )
+                    if not same_semantic_event:
                         raise EventIntegrityError(f"event id collision: {event.event_id}")
                     return persisted
 
