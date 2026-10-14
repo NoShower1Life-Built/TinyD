@@ -190,11 +190,10 @@ async def agent_run_events(websocket: WebSocket, run_id: UUID, after_sequence: i
     cursor = max(0, after_sequence)
     try:
         while True:
-            history = event_journal.history(tenant_uuid, "run", run_id)
+            history = event_journal.history_after(tenant_uuid, "run", run_id, cursor)
             for event in history:
-                if event.sequence > cursor:
-                    await websocket.send_json(event.model_dump(mode="json"))
-                    cursor = event.sequence
+                await websocket.send_json(event.model_dump(mode="json"))
+                cursor = event.sequence
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
         return
