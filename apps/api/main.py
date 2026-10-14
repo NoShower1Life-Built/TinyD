@@ -18,7 +18,6 @@ from packages.runtime.src.engine import RuntimeEngine
 from packages.runtime.src.ledger import PostgresEventLedger
 from packages.contracts.src.envelope import EventEnvelope, EventIntegrity
 from packages.runtime.src.journal import EventIntegrityError, EventSequenceConflict, PostgresEventJournal
-from packages.runtime.src.worker import DurableWorker
 
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
 _database_url = os.getenv("DATABASE_URL", "").strip()
@@ -199,19 +198,6 @@ async def agent_run_events(websocket: WebSocket, run_id: UUID, after_sequence: i
             await asyncio.sleep(0.5)
     except WebSocketDisconnect:
         return
-
-
-@app.post("/v1/agent/worker/run-once")
-def agent_worker_run_once(tenant: Tenant = Depends(require_tenant)):
-    """Run one durable queue item; scope is restricted to operational operators."""
-    require_scope(tenant, "workers:execute")
-    if event_journal is None:
-        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is not configured")
-    try:
-        result = DurableWorker(_database_url).run_once()
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail="worker execution failed") from exc
-    return {"status": "idle"} if result is None else result
 
 
 @app.get("/v1/marketplace/packages")
