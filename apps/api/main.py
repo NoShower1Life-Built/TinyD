@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -14,10 +15,13 @@ from apps.api.billing import create_checkout_session, report_meter_event, verify
 from apps.api.registry import get_package, list_packages, manifest_digest
 from packages.runtime.src.engine import RuntimeEngine
 from packages.runtime.src.ledger import PostgresEventLedger
+from packages.contracts.src.envelope import EventEnvelope, EventIntegrity
+from packages.runtime.src.journal import EventIntegrityError, EventSequenceConflict, PostgresEventJournal
 
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
 _database_url = os.getenv("DATABASE_URL", "").strip()
 engine = RuntimeEngine(ledger=PostgresEventLedger(_database_url) if _database_url else None)
+event_journal = PostgresEventJournal(_database_url) if _database_url else None
 
 
 class WorkflowRun(BaseModel):
@@ -40,6 +44,11 @@ class CheckoutRequest(BaseModel):
     version: str | None = None
     success_url: str
     cancel_url: str
+
+
+class AgentRunRequest(BaseModel):
+    run_id: UUID
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 def event_id_for(workflow: str, payload: dict[str, Any]) -> str:
@@ -91,6 +100,63 @@ def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
         raise HTTPException(status_code=404, detail="event not found")
     replay_event = {**event, "id": replay_id_for(event["id"]), "type": "workflow.replayed", "replayed_from": event["id"], "timestamp": now()}
     return {**emit(replay_event), "event": replay_event}
+
+
+@app.post("/v1/agent/runs", status_code=201)
+def submit_agent_run(request: AgentRunRequest, tenant: Tenant = Depends(require_tenant)):
+    """Persist an agent run request to the canonical journal; never fall back to memory."""
+    require_scope(tenant, "executions:write")
+    if event_journal is None:
+        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is not configured")
+
+    tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant.id}")
+    agent_uuid = uuid5(NAMESPACE_URL, "tinyd:agent:default")
+    event_id = uuid5(request.run_id, "tinyd:run.requested:v1")
+
+    existing = event_journal.get(event_id, tenant_uuid)
+    if existing is not None:
+        if existing.payload != request.payload or existing.run_id != request.run_id:
+            raise HTTPException(status_code=409, detail="run_id already exists with different content")
+        return {
+            "status": "accepted",
+            "idempotent": True,
+            "tenant_id": tenant.id,
+            "event": existing.model_dump(mode="json"),
+        }
+
+    event = EventEnvelope(
+        event_id=event_id,
+        event_type="run.requested",
+        event_version=1,
+        tenant_id=tenant_uuid,
+        agent_id=agent_uuid,
+        run_id=request.run_id,
+        correlation_id=uuid5(request.run_id, "tinyd:correlation:v1"),
+        aggregate_type="run",
+        aggregate_id=request.run_id,
+        sequence=1,
+        producer="tinyd-agent-api",
+        payload=request.payload,
+        integrity=EventIntegrity(previous_digest=None, digest="pending"),
+    )
+    event = event.model_copy(update={
+        "integrity": EventIntegrity(
+            previous_digest=None,
+            digest=event_journal.calculate_digest(event, None),
+        )
+    })
+    try:
+        persisted = event_journal.append(event)
+    except EventIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except EventSequenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "status": "accepted",
+        "idempotent": False,
+        "tenant_id": tenant.id,
+        "event": persisted.model_dump(mode="json"),
+    }
 
 
 @app.get("/v1/marketplace/packages")
