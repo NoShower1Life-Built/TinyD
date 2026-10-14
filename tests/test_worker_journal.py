@@ -1,7 +1,7 @@
 import hashlib
 import json
 import os
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
@@ -54,9 +54,7 @@ def test_worker_claims_journal_request_and_persists_transitions():
     assert len(result["result"]["sha256"]) == 64
 
     tenant_uuid = response.json()["event"]["tenant_id"]
-    history = event_journal.history(
-        __import__("uuid").UUID(tenant_uuid), "run", __import__("uuid").UUID(run_id)
-    )
+    history = event_journal.history(UUID(tenant_uuid), "run", UUID(run_id))
     assert [event.event_type for event in history] == [
         "run.requested",
         "run.started",
@@ -93,6 +91,37 @@ def test_worker_records_unknown_operation_as_durable_failure():
         "run.started",
         "run.failed",
     ]
+
+
+def test_expired_worker_lease_is_reclaimed_with_incremented_attempt():
+    import psycopg
+
+    tenant_id = f"worker-lease-{uuid4()}"
+    token = token_for(tenant_id)
+    run_id = str(uuid4())
+    response = client.post(
+        "/v1/agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"run_id": run_id, "payload": {"operation": "sha256", "value": "lease-test"}},
+    )
+    assert response.status_code == 201, response.text
+
+    first_worker = DurableWorker(os.environ["DATABASE_URL"], worker_id=f"lease-a-{uuid4()}")
+    first_claim = first_worker.claim_next()
+    assert first_claim is not None
+    assert first_claim["attempts"] == 1
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        conn.execute(
+            "UPDATE tinyd_worker_tasks SET lease_until=NOW() - INTERVAL '1 second' WHERE event_id=%s",
+            (first_claim["event_id"],),
+        )
+
+    second_worker = DurableWorker(os.environ["DATABASE_URL"], worker_id=f"lease-b-{uuid4()}")
+    reclaimed = second_worker.claim_next()
+    assert reclaimed is not None
+    assert reclaimed["event_id"] == first_claim["event_id"]
+    assert reclaimed["attempts"] == 2
 
 
 def test_websocket_streams_persisted_events_only_for_authorized_tenant():
