@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import hashlib
 import json
 import os
@@ -165,10 +166,22 @@ def submit_agent_run(request: AgentRunRequest, tenant: Tenant = Depends(require_
 async def agent_run_events(websocket: WebSocket, run_id: UUID, after_sequence: int = 0):
     """Stream persisted run events over WebSocket; PostgreSQL journal remains authoritative."""
     authorization = websocket.headers.get("authorization", "")
-    if not authorization.lower().startswith("bearer "):
-        await websocket.close(code=4401, reason="bearer token required")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    offered_protocols = websocket.scope.get("subprotocols", [])
+    if not token:
+        encoded = next(
+            (protocol.removeprefix("tinyd.bearer.") for protocol in offered_protocols
+             if protocol.startswith("tinyd.bearer.")),
+            None,
+        )
+        if encoded:
+            try:
+                token = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                token = ""
+    if not token:
+        await websocket.close(code=4401, reason="bearer credential required")
         return
-    token = authorization[7:].strip()
     token_digest = hashlib.sha256(token.encode()).hexdigest()
     identity = _token_map().get(token_digest)
     if not isinstance(identity, dict):
@@ -186,7 +199,8 @@ async def agent_run_events(websocket: WebSocket, run_id: UUID, after_sequence: i
         await websocket.close(code=1013, reason="canonical PostgreSQL journal is not configured")
         return
     tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant_id.strip()}")
-    await websocket.accept()
+    selected_protocol = "tinyd.events.v1" if "tinyd.events.v1" in offered_protocols else None
+    await websocket.accept(subprotocol=selected_protocol)
     cursor = max(0, after_sequence)
     try:
         while True:
