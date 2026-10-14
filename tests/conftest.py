@@ -31,6 +31,13 @@ def isolate_ephemeral_postgres_database():
 
     with psycopg.connect(dsn) as conn:
         conn.execute("TRUNCATE TABLE tinyd_events")
+        journal_exists = conn.execute(
+            "SELECT to_regclass('public.tinyd_event_journal')"
+        ).fetchone()[0]
+        if journal_exists:
+            conn.execute(
+                "TRUNCATE TABLE tinyd_event_journal, tinyd_event_journal_heads"
+            )
 
     # API tests share a module-level engine; reset its process-local cache too.
     try:
