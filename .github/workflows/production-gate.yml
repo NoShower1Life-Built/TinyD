@@ -94,7 +94,7 @@ jobs:
       - name: Run marketplace API integration tests
         run: pytest -q tests/test_marketplace.py
       - name: Run durable API integration tests
-        run: pytest -q tests/test_nexora_control_plane.py tests/test_postgres_ledger.py
+        run: pytest -q tests/test_nexora_control_plane.py tests/test_postgres_ledger.py tests/test_agent_journal_api.py
 
   browser-render:
     name: Browser render smoke test
