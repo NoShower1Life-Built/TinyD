@@ -111,7 +111,7 @@ def submit_agent_run(request: AgentRunRequest, tenant: Tenant = Depends(require_
 
     tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant.id}")
     agent_uuid = uuid5(NAMESPACE_URL, "tinyd:agent:default")
-    event_id = uuid5(request.run_id, "tinyd:run.requested:v1")
+    event_id = uuid5(tenant_uuid, f"tinyd:run:{request.run_id}:v1")
 
     existing = event_journal.get(event_id, tenant_uuid)
     if existing is not None:
