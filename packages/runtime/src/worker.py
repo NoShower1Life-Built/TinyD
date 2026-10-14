@@ -141,7 +141,11 @@ class DurableWorker:
         if not history:
             raise WorkerError("claimed task has no authoritative run.requested event")
         last = history[-1]
-        event_id = uuid5(task["tenant_id"], f"tinyd:worker:{task['event_id']}:{event_type}:v1")
+        event_attempt = task["attempts"] if event_type in {"run.started", "run.failed"} else 1
+        event_id = uuid5(
+            task["tenant_id"],
+            f"tinyd:worker:{task['event_id']}:{event_type}:attempt:{event_attempt}:v1",
+        )
         transition = EventEnvelope(
             event_id=event_id,
             event_type=event_type,
