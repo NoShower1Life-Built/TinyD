@@ -1,0 +1,15 @@
+* { box-sizing: border-box; }
+body { margin: 0; min-height: 100vh; background: #080a0f; color: #eef1f7; font-family: Inter, system-ui, sans-serif; }
+button, input { font: inherit; }
+.phone { width: min(100%, 430px); min-height: 100vh; margin: auto; padding: 24px; display: flex; flex-direction: column; justify-content: center; gap: 18px; }
+header { display: flex; justify-content: space-between; align-items: center; font-size: 18px; }
+header span { font-size: 12px; opacity: .65; text-transform: uppercase; letter-spacing: .08em; }
+.identity { display: grid; gap: 7px; font-size: 12px; opacity: .8; }
+.identity input, .number { width: 100%; border: 1px solid #2b3140; background: #11151e; color: inherit; border-radius: 14px; padding: 15px; outline: none; }
+.number { font-size: 28px; text-align: center; letter-spacing: .04em; }
+.actions { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; }
+button { border: 1px solid #2b3140; background: #151a24; color: inherit; border-radius: 14px; padding: 14px 10px; cursor: pointer; }
+button:disabled { opacity: .35; cursor: not-allowed; }
+button.call { background: #164b2b; border-color: #287847; }
+button.hangup { background: #4b191d; border-color: #7c2c32; }
+.notice { font-size: 12px; line-height: 1.5; opacity: .55; text-align: center; }
