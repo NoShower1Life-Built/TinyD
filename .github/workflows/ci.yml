@@ -2,13 +2,15 @@ name: TinyD CI
 
 on:
   push:
-    branches: [main, tinyd-v1.0-scaffold]
+    branches: [main, tinyd-v1.0-scaffold, feat/tinyd-ai-agent-contracts, fix/production-gate-corrective]
   pull_request:
     branches: [main]
 
 jobs:
   validate:
     runs-on: ubuntu-latest
+    env:
+      TINYD_ALLOW_DESTRUCTIVE_TEST_DB_CLEANUP: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
