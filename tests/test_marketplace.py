@@ -139,4 +139,4 @@ def test_usage_records_tenant_boundary_without_stripe_customer():
         },
     )
     assert response.status_code == 201
-    assert response.json()["tenant_id"] == "tenant-test"
+    assert response.json()["tenant_id"] == tenant_id
