@@ -22,7 +22,22 @@ class RuntimeEngine:
         existing = self.get(event_id)
         if existing is None:
             if self.ledger is not None:
-                self.ledger.append(event)
+                inserted = self.ledger.append(event)
+                if not inserted:
+                    # Another process may have inserted this identifier after our
+                    # initial read. Re-read the durable winner before acknowledging.
+                    existing = self.ledger.get(event_id)
+                    if existing is None:
+                        raise RuntimeError(
+                            f"event insert conflicted but no durable event exists: {event_id}"
+                        )
+                    if self._semantic_event(existing) != self._semantic_event(event):
+                        raise ValueError(f"event id collision: {event_id}")
+                    return {
+                        "status": "accepted",
+                        "event_id": event_id,
+                        "idempotent": True,
+                    }
             self.state[event_id] = dict(event)
             return {"status": "accepted", "event_id": event_id}
         if self._semantic_event(existing) != self._semantic_event(event):
