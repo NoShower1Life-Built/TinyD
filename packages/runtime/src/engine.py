@@ -19,15 +19,31 @@ class RuntimeEngine:
         event_id = event.get("id")
         if not isinstance(event_id, str) or not event_id:
             raise ValueError("event id is required")
+
         existing = self.get(event_id)
-        if existing is None:
-            if self.ledger is not None:
-                self.ledger.append(event)
-            self.state[event_id] = dict(event)
-            return {"status": "accepted", "event_id": event_id}
-        if self._semantic_event(existing) != self._semantic_event(event):
-            raise ValueError(f"event id collision: {event_id}")
-        return {"status": "accepted", "event_id": event_id, "idempotent": True}
+        if existing is not None:
+            if self._semantic_event(existing) != self._semantic_event(event):
+                raise ValueError(f"event id collision: {event_id}")
+            return {"status": "accepted", "event_id": event_id, "idempotent": True}
+
+        if self.ledger is not None:
+            inserted = self.ledger.append(event)
+            if not inserted:
+                # Another process may have inserted this id after the initial read.
+                # Resolve the unique-key race against the durable record instead of
+                # reporting success for an event that was not actually persisted.
+                existing = self.ledger.get(event_id)
+                if existing is None:
+                    raise RuntimeError(
+                        f"ledger rejected event {event_id!r} but no durable record exists"
+                    )
+                if self._semantic_event(existing) != self._semantic_event(event):
+                    raise ValueError(f"event id collision: {event_id}")
+                self.state[event_id] = dict(existing)
+                return {"status": "accepted", "event_id": event_id, "idempotent": True}
+
+        self.state[event_id] = dict(event)
+        return {"status": "accepted", "event_id": event_id}
 
     def get(self, event_id: str) -> dict[str, Any] | None:
         if self.ledger is not None:
@@ -43,4 +59,8 @@ class RuntimeEngine:
     def tenant_snapshot(self, tenant_id: str) -> dict[str, Any]:
         if self.ledger is not None:
             return self.ledger.tenant_snapshot(tenant_id)
-        return {event_id: dict(event) for event_id, event in self.state.items() if event.get("tenant_id") == tenant_id}
+        return {
+            event_id: dict(event)
+            for event_id, event in self.state.items()
+            if event.get("tenant_id") == tenant_id
+        }

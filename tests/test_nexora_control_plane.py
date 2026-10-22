@@ -1,5 +1,6 @@
 import hashlib
 import json
+import uuid
 
 from fastapi.testclient import TestClient
 
@@ -35,7 +36,11 @@ def test_health():
 
 
 def test_run_is_deterministic_and_idempotent(monkeypatch):
-    monkeypatch.setenv('TINYD_TENANT_TOKENS', TEST_CONFIG)
+    # Durable CI databases survive across test cases and runs; isolate this event by tenant.
+    tenant_id = f'{TEST_TENANT}-{uuid.uuid4().hex}'
+    config = json.dumps({hashlib.sha256(TEST_TOKEN.encode()).hexdigest(): {'tenant_id': tenant_id, 'scopes': ['executions:write']}})
+    monkeypatch.setenv('TINYD_TENANT_TOKENS', config)
+    before_count = client.get('/v1/runtime/status').json()['event_count']
     payload = {'workflow': 'nexora-check', 'payload': {'x': 1}}
     first = client.post('/v1/executions', json=payload, headers=auth_headers())
     second = client.post('/v1/executions', json=payload, headers=auth_headers())
@@ -44,7 +49,7 @@ def test_run_is_deterministic_and_idempotent(monkeypatch):
     assert second.status_code == 201
     assert first.json()['event_id'] == second.json()['event_id']
     assert second.json()['idempotent'] is True
-    assert client.get('/v1/runtime/status').json()['event_count'] == 1
+    assert client.get('/v1/runtime/status').json()['event_count'] == before_count + 1
 
 
 def test_event_ids_are_tenant_scoped(monkeypatch):
