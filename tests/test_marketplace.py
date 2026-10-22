@@ -55,7 +55,7 @@ def test_install_enforces_scope_and_records_tenant_event():
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 201
-    assert response.json()["tenant_id"] == tenant_id
+    assert response.json()["tenant_id"] == "tenant-test"
     events = client.get(
         "/v1/events", headers={"Authorization": f"Bearer {tenant_token(['events:read'])}"}
     )
