@@ -11,8 +11,14 @@ class ConflictLedger:
     def __init__(self, stored_event):
         self.stored_event = stored_event
         self.append_calls = 0
+        self.get_calls = 0
 
     def get(self, event_id):
+        self.get_calls += 1
+        # The first read models the race: no row was visible before the insert.
+        # A later read returns the winner after append reports a uniqueness conflict.
+        if self.get_calls == 1:
+            return None
         if self.stored_event and self.stored_event["id"] == event_id:
             return dict(self.stored_event)
         return None
