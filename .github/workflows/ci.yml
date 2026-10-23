@@ -25,6 +25,7 @@ jobs:
           --health-retries 5
     env:
       DATABASE_URL: postgresql://tinyd:tinyd_test_password@localhost:5432/tinyd_test
+      TINYD_TEST_DATABASE: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
