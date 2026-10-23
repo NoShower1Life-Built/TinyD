@@ -1,6 +1,9 @@
 import copy
+
 import pytest
+
 from packages.tinyd_skills import SkillContractError, validate_manifest
+
 
 VALID = {
     "contract_version": "1.0", "id": "repository-audit", "version": "1.0.0",
@@ -22,9 +25,12 @@ VALID = {
 }
 
 
-def test_valid_manifest_returns_copy():
+def test_valid_manifest_returns_deep_copy():
     result = validate_manifest(VALID)
     assert result == VALID and result is not VALID
+    assert result["inputs"] is not VALID["inputs"]
+    result["inputs"][0]["name"] = "mutated"
+    assert VALID["inputs"][0]["name"] == "repository"
 
 
 @pytest.mark.parametrize("field", ["contract_version", "id", "version", "name", "purpose"])
@@ -35,6 +41,19 @@ def test_required_identity_fields_are_enforced(field):
         validate_manifest(broken)
 
 
+def test_semver_prerelease_and_build_metadata_are_accepted():
+    candidate = copy.deepcopy(VALID)
+    candidate["version"] = "1.2.3-rc.1+build.7"
+    assert validate_manifest(candidate)["version"] == "1.2.3-rc.1+build.7"
+
+
+def test_non_string_top_level_keys_fail_cleanly():
+    broken = copy.deepcopy(VALID)
+    broken[7] = "unexpected"
+    with pytest.raises(SkillContractError, match="field names must be strings"):
+        validate_manifest(broken)
+
+
 def test_unknown_fields_fail_closed():
     broken = copy.deepcopy(VALID)
     broken["unreviewed_capability"] = True
@@ -42,11 +61,27 @@ def test_unknown_fields_fail_closed():
         validate_manifest(broken)
 
 
-def test_high_risk_requires_approval():
+def test_high_risk_requires_all_writes_to_require_approval():
     broken = copy.deepcopy(VALID)
     broken["risk"] = "high"
-    with pytest.raises(SkillContractError, match="approval-required"):
+    broken["permissions"]["write"] = ["send_email", "production"]
+    broken["permissions"]["requires_approval"] = ["send_email"]
+    with pytest.raises(SkillContractError, match="every high/critical risk write"):
         validate_manifest(broken)
+
+
+def test_approval_permissions_must_be_declared_writes():
+    broken = copy.deepcopy(VALID)
+    broken["permissions"]["requires_approval"] = ["send_email"]
+    with pytest.raises(SkillContractError, match="subset of declared write"):
+        validate_manifest(broken)
+
+
+def test_write_permission_can_be_explicitly_approval_gated():
+    candidate = copy.deepcopy(VALID)
+    candidate["permissions"]["write"] = ["send_email"]
+    candidate["permissions"]["requires_approval"] = ["send_email"]
+    assert validate_manifest(candidate)["permissions"]["requires_approval"] == ["send_email"]
 
 
 def test_bounded_autonomy_rejects_production_write():
@@ -71,9 +106,15 @@ def test_workflow_must_be_sequential():
         validate_manifest(broken)
 
 
-def test_write_cannot_bypass_approval_declaration():
+def test_retryable_errors_cannot_be_duplicated():
     broken = copy.deepcopy(VALID)
-    broken["permissions"]["write"] = ["send_email"]
-    broken["permissions"]["requires_approval"] = ["send_email"]
-    with pytest.raises(SkillContractError, match="both unconditional write"):
+    broken["failure_policy"]["retryable_errors"].append("rate_limit")
+    with pytest.raises(SkillContractError, match="must not contain duplicates"):
+        validate_manifest(broken)
+
+
+def test_boolean_is_not_a_valid_attempt_count():
+    broken = copy.deepcopy(VALID)
+    broken["failure_policy"]["max_attempts"] = True
+    with pytest.raises(SkillContractError, match="integer from 1 to 10"):
         validate_manifest(broken)
