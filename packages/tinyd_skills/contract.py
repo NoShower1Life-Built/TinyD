@@ -90,7 +90,7 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
     _require(isinstance(failure, dict) and set(failure) == {"retryable_errors", "max_attempts", "on_exhaustion", "idempotency_key"}, "failure_policy has invalid shape")
     _require(isinstance(failure["retryable_errors"], list) and all(isinstance(x, str) and x.strip() for x in failure["retryable_errors"]), "failure_policy.retryable_errors must be a list of strings")
     _require(isinstance(failure["max_attempts"], int) and not isinstance(failure["max_attempts"], bool) and 1 <= failure["max_attempts"] <= 10, "failure_policy.max_attempts must be an integer from 1 to 10")
-    _require(failure["on_exhaustion"] in {"stop", "escalate", "compensate"}, "failure_policy.on_exhaustion must be stop, escalate, or compensate")
+    _require(isinstance(failure["on_exhaustion"], str) and failure["on_exhaustion"] in {"stop", "escalate", "compensate"}, "failure_policy.on_exhaustion must be stop, escalate, or compensate")
     _require(isinstance(failure["idempotency_key"], str) and failure["idempotency_key"].strip(), "failure_policy.idempotency_key must be non-empty")
 
     verification = manifest["verification"]
