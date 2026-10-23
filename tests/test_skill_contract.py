@@ -20,7 +20,7 @@ VALID = {
         {"step": 2, "action": "Inspect relevant source, tests, and workflow configuration.", "success_condition": "Each finding references inspected evidence."},
         {"step": 3, "action": "Return prioritized findings and verification gaps.", "success_condition": "Report distinguishes observed, inferred, and unknown."}
     ],
-    "failure_policy": {"retryable_errors": ["rate_limit", "transient_network"], "max_attempts": 3, "on_exhaustion": "escalate", "idempotency_key": "repository+ref+audit_version"},
+    "failure_policy": {"retryable_errors": ["rate_limit", "transient_network"], "max_attempts": 3, "on_exhaustion": "escalate", "idempotency_key": "repository+ref+audit_version", "compensation_action": None},
     "verification": {"acceptance_criteria": ["Every finding includes evidence or is explicitly marked as an inference."], "evidence_required": ["repository_ref", "inspected_paths"], "independent_check": True}
 }
 
@@ -45,6 +45,14 @@ def test_semver_prerelease_and_build_metadata_are_accepted():
     candidate = copy.deepcopy(VALID)
     candidate["version"] = "1.2.3-rc.1+build.7"
     assert validate_manifest(candidate)["version"] == "1.2.3-rc.1+build.7"
+
+
+@pytest.mark.parametrize("version", ["1.0.0-01", "1.0.0-alpha..1", "01.0.0", "1.0"])
+def test_invalid_semver_is_rejected(version):
+    candidate = copy.deepcopy(VALID)
+    candidate["version"] = version
+    with pytest.raises(SkillContractError, match="semantic version"):
+        validate_manifest(candidate)
 
 
 def test_non_string_top_level_keys_fail_cleanly():
@@ -118,3 +126,24 @@ def test_boolean_is_not_a_valid_attempt_count():
     broken["failure_policy"]["max_attempts"] = True
     with pytest.raises(SkillContractError, match="integer from 1 to 10"):
         validate_manifest(broken)
+
+
+def test_compensation_mode_requires_a_declared_action():
+    broken = copy.deepcopy(VALID)
+    broken["failure_policy"]["on_exhaustion"] = "compensate"
+    with pytest.raises(SkillContractError, match="compensation_action"):
+        validate_manifest(broken)
+
+
+def test_compensation_action_is_rejected_for_other_exhaustion_modes():
+    broken = copy.deepcopy(VALID)
+    broken["failure_policy"]["compensation_action"] = "restore_previous_state"
+    with pytest.raises(SkillContractError, match="if and only if"):
+        validate_manifest(broken)
+
+
+def test_compensation_action_must_be_explicit():
+    candidate = copy.deepcopy(VALID)
+    candidate["failure_policy"]["on_exhaustion"] = "compensate"
+    candidate["failure_policy"]["compensation_action"] = "restore_previous_state"
+    assert validate_manifest(candidate)["failure_policy"]["compensation_action"] == "restore_previous_state"
