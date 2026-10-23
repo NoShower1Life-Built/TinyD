@@ -1,6 +1,6 @@
 # TinyD Skill System — Specification v1
 
-Status: Proposed implementation baseline. The contract validator and unit tests in this branch are implementation artifacts; no runtime scheduler, tool executor, persistence integration, or production deployment is claimed here.
+Status: Proposed implementation baseline. The contract validator and regression tests are implementation artifacts; no skill scheduler, tool executor, durable skill-task state machine, or production deployment is claimed here.
 
 ## Objective
 
@@ -29,17 +29,22 @@ Research, Ads Manager, Canva, email, calendar, and Vercel integrations should be
 
 ## Required manifest
 
-Each skill declares contract version, stable ID, semantic version, purpose, triggers, typed inputs and outputs, allowed tools, read/write/approval permissions, risk, autonomy, sequential workflow steps with success conditions, retry/idempotency policy, acceptance criteria, required evidence, and independent-check requirements.
+Each skill declares contract version, stable ID, semantic version, purpose, triggers, typed inputs and outputs, allowed tools, read/write/approval permissions, risk, autonomy, sequential workflow steps with success conditions, retry/idempotency policy, compensation action where applicable, acceptance criteria, required evidence, and independent-check requirements.
 
-The schema is closed by default: unknown top-level fields fail validation until a contract version explicitly adds them. Semantic versions accept the MAJOR.MINOR.PATCH form and standard prerelease/build metadata.
+The schema is closed by default: unknown top-level fields fail validation until a contract version explicitly adds them. Semantic versions use MAJOR.MINOR.PATCH, optional prerelease, and optional build metadata; numeric prerelease identifiers cannot contain leading zeroes.
 
-Permission semantics are explicit:
+## Permission semantics
+
 - `read` declares read capabilities.
 - `write` declares possible write capabilities; declaration alone does not authorize execution.
 - `requires_approval` must be a subset of `write` and marks write capabilities that always need an approval gate.
 - For high/critical risk skills, every declared write capability must be approval-gated.
 - Bounded autonomous skills are low-risk only and cannot declare approval-gated actions or financial, destructive, or production writes.
 - The runtime must independently authorize every action against tenant policy and the approval bound to the exact action plan. Manifest validation never grants permission.
+
+## Failure and compensation semantics
+
+The retry policy has a bounded attempt count, declared retryable error classes, and a stable idempotency-key expression. Unknown errors fail closed. A manifest selecting `on_exhaustion: compensate` must identify a non-empty `compensation_action`; all other exhaustion modes must set it to null. This declaration is not authorization to execute compensation: the runtime must separately authorize it and record the outcome.
 
 ## Execution lifecycle
 
