@@ -10,7 +10,12 @@ import re
 from typing import Any, Mapping
 
 _ID = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
-_SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$")
+_SEMVER = re.compile(
+    r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)"
+    r"(?:-((?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*)"
+    r"(?:\.(?:0|[1-9]\d*|[0-9A-Za-z-]*[A-Za-z-][0-9A-Za-z-]*))*))?"
+    r"(?:\+([0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*))?$"
+)
 _AUTONOMY = {"observe", "recommend", "prepare", "approved_execute", "bounded_autonomous"}
 _RISK = {"low", "medium", "high", "critical"}
 
@@ -40,7 +45,7 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
     _require(not unknown, f"unknown fields: {', '.join(sorted(unknown))}")
     _require(candidate["contract_version"] == "1.0", "contract_version must be '1.0'")
     _require(isinstance(candidate["id"], str) and bool(_ID.fullmatch(candidate["id"])), "id must be 2-63 lowercase letters, digits, or hyphens and start with a letter")
-    _require(isinstance(candidate["version"], str) and bool(_SEMVER.fullmatch(candidate["version"])), "version must be semantic version MAJOR.MINOR.PATCH with optional prerelease/build metadata")
+    _require(isinstance(candidate["version"], str) and bool(_SEMVER.fullmatch(candidate["version"])), "version must be valid semantic version MAJOR.MINOR.PATCH with valid prerelease/build metadata")
     for field in ("name", "purpose"):
         _require(isinstance(candidate[field], str) and candidate[field].strip(), f"{field} must be a non-empty string")
 
@@ -98,12 +103,15 @@ def validate_manifest(manifest: Mapping[str, Any]) -> dict[str, Any]:
     _require(steps == list(range(1, len(steps) + 1)), "workflow steps must be sequential starting at 1")
 
     failure = candidate["failure_policy"]
-    _require(isinstance(failure, dict) and set(failure) == {"retryable_errors", "max_attempts", "on_exhaustion", "idempotency_key"}, "failure_policy has invalid shape")
+    _require(isinstance(failure, dict) and set(failure) == {"retryable_errors", "max_attempts", "on_exhaustion", "idempotency_key", "compensation_action"}, "failure_policy has invalid shape")
     _require(isinstance(failure["retryable_errors"], list) and all(isinstance(x, str) and x.strip() for x in failure["retryable_errors"]), "failure_policy.retryable_errors must be a list of strings")
     _require(len(failure["retryable_errors"]) == len(set(failure["retryable_errors"])), "failure_policy.retryable_errors must not contain duplicates")
     _require(isinstance(failure["max_attempts"], int) and not isinstance(failure["max_attempts"], bool) and 1 <= failure["max_attempts"] <= 10, "failure_policy.max_attempts must be an integer from 1 to 10")
     _require(isinstance(failure["on_exhaustion"], str) and failure["on_exhaustion"] in {"stop", "escalate", "compensate"}, "failure_policy.on_exhaustion must be stop, escalate, or compensate")
     _require(isinstance(failure["idempotency_key"], str) and failure["idempotency_key"].strip(), "failure_policy.idempotency_key must be non-empty")
+    compensation = failure["compensation_action"]
+    _require(compensation is None or (isinstance(compensation, str) and compensation.strip()), "failure_policy.compensation_action must be null or a non-empty action identifier")
+    _require((failure["on_exhaustion"] == "compensate") == (compensation is not None), "compensation_action must be declared if and only if on_exhaustion is compensate")
 
     verification = candidate["verification"]
     _require(isinstance(verification, dict) and set(verification) == {"acceptance_criteria", "evidence_required", "independent_check"}, "verification has invalid shape")
