@@ -18,7 +18,7 @@ A skill must not create a second scheduler, bypass the journal, access another t
 
 ## Initial portfolio, in dependency order
 
-1. Skill Contract Validator — manifest shape and safety invariants. First slice implemented in this branch.
+1. Skill Contract Validator — manifest shape and safety invariants. Validator and regression tests are implemented in this branch; runtime enforcement is not.
 2. Repository Audit — read-only repository reconnaissance, evidence-backed findings, risk classification, and verification gaps.
 3. Project Memory / Decision Ledger — durable tenant-scoped project state and append-only decisions with source references.
 4. Watcher / Sentinel — scheduled polling through the existing runtime boundary, canonical state comparison, deduplication, and significance thresholds.
@@ -31,7 +31,15 @@ Research, Ads Manager, Canva, email, calendar, and Vercel integrations should be
 
 Each skill declares contract version, stable ID, semantic version, purpose, triggers, typed inputs and outputs, allowed tools, read/write/approval permissions, risk, autonomy, sequential workflow steps with success conditions, retry/idempotency policy, acceptance criteria, required evidence, and independent-check requirements.
 
-The schema is closed by default: unknown top-level fields fail validation until a contract version explicitly adds them.
+The schema is closed by default: unknown top-level fields fail validation until a contract version explicitly adds them. Semantic versions accept the MAJOR.MINOR.PATCH form and standard prerelease/build metadata.
+
+Permission semantics are explicit:
+- `read` declares read capabilities.
+- `write` declares possible write capabilities; declaration alone does not authorize execution.
+- `requires_approval` must be a subset of `write` and marks write capabilities that always need an approval gate.
+- For high/critical risk skills, every declared write capability must be approval-gated.
+- Bounded autonomous skills are low-risk only and cannot declare approval-gated actions or financial, destructive, or production writes.
+- The runtime must independently authorize every action against tenant policy and the approval bound to the exact action plan. Manifest validation never grants permission.
 
 ## Execution lifecycle
 
@@ -56,11 +64,11 @@ A skill must not claim a higher state than evidence supports.
 - Default to read-only.
 - Model text never grants permissions.
 - A tool must be on the skill allowlist and permitted by tenant policy.
-- High/critical risk operations require explicit approval.
+- High/critical risk operations require explicit approval for every declared write capability.
 - Sending messages, changing production, merging, deleting, or spending money must be separately authorized.
 - Bounded autonomous mode is restricted to low-risk, reversible work and cannot perform production, financial, or destructive writes.
 - Authorization is checked at execution time, not only during planning.
-- Approval binds to an immutable action-plan digest, target, tenant, and expiry; material changes invalidate it.
+- Approval binds to an immutable action-plan digest, target, tenant, actor, policy version, expiry, and one-time-use/replay protection; material changes invalidate it.
 - Secrets are referenced through a secret manager, never embedded in manifests, logs, prompts, or evidence.
 - Cross-tenant resource lookups must include and verify tenant identity.
 - Denials and failures are journaled without leaking secrets.
