@@ -8,7 +8,7 @@ import re
 from typing import Any, Mapping
 
 _ID = re.compile(r"^[a-z][a-z0-9-]{1,62}$")
-_SEMVER = re.compile(r"^(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$")
+_SEMVER = re.compile(r"^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$")
 _AUTONOMY = {"observe", "recommend", "prepare", "approved_execute", "bounded_autonomous"}
 _RISK = {"low", "medium", "high", "critical"}
 
