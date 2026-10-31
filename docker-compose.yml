@@ -25,5 +25,20 @@ services:
     ports:
       - "8000:8000"
 
+  tinyd-worker:
+    build:
+      context: .
+      dockerfile: docker/Dockerfile
+    command: ["python", "-m", "packages.runtime.src.worker"]
+    init: true
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      DATABASE_URL: postgresql://tinyd:tinyd@postgres:5432/tinyd
+      TINYD_WORKER_ID: compose-worker
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   tinyd-postgres:
