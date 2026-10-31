@@ -231,7 +231,7 @@ def main() -> None:
     dsn = os.getenv("DATABASE_URL", "").strip()
     if not dsn:
         raise SystemExit("DATABASE_URL is required")
-    DurableWorker(dsn).run_forever()
+    DurableWorker(dsn, worker_id=os.getenv("TINYD_WORKER_ID") or None).run_forever()
 
 
 if __name__ == "__main__":
