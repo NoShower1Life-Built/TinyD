@@ -18,7 +18,7 @@ async function request(path, options = {}) {
     ...(accessToken ? { Authorization: "Bearer " + accessToken } : {}),
   };
   const response = await fetch(
-    new URL(path.replace(/^\\//, ""), new URL(API_BASE, window.location.href)),
+    new URL((path.startsWith("/") ? path.slice(1) : path), new URL(API_BASE, window.location.href)),
     { ...options, headers: { "content-type": "application/json", ...headers } },
   );
   if (!response.ok) {
