@@ -154,3 +154,39 @@ def test_tenant_history_isolation(journal):
 
     assert [event.tenant_id for event in journal.tenant_history(tenant_a)] == [tenant_a]
     assert [event.tenant_id for event in journal.tenant_history(tenant_b)] == [tenant_b]
+
+def test_history_after_returns_bounded_ordered_pages(journal):
+    tenant_id = uuid4()
+    aggregate_id = uuid4()
+    first = make_event(journal, tenant_id=tenant_id, aggregate_id=aggregate_id, sequence=1)
+    journal.append(first)
+    second = make_event(
+        journal,
+        tenant_id=tenant_id,
+        aggregate_id=aggregate_id,
+        sequence=2,
+        previous_digest=first.integrity.digest,
+    )
+    journal.append(second)
+    third = make_event(
+        journal,
+        tenant_id=tenant_id,
+        aggregate_id=aggregate_id,
+        sequence=3,
+        previous_digest=second.integrity.digest,
+    )
+    journal.append(third)
+
+    first_page = journal.history_after(tenant_id, "run", aggregate_id, 0, 2)
+    second_page = journal.history_after(tenant_id, "run", aggregate_id, 2, 2)
+    assert [event.sequence for event in first_page] == [1, 2]
+    assert [event.sequence for event in second_page] == [3]
+
+
+@pytest.mark.parametrize(
+    ("after_sequence", "limit"),
+    [(-1, 1), (0, 0), (0, 1001)],
+)
+def test_history_after_rejects_invalid_pagination(journal, after_sequence, limit):
+    with pytest.raises(ValueError):
+        journal.history_after(uuid4(), "run", uuid4(), after_sequence, limit)
