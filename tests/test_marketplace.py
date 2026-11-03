@@ -54,7 +54,7 @@ def test_install_enforces_scope_and_records_tenant_event():
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 201
-    assert response.json()["tenant_id"] == "tenant-usage-test"
+    assert response.json()["tenant_id"] == "tenant-test"
     events = client.get(
         "/v1/events", headers={"Authorization": f"Bearer {tenant_token(['events:read'])}"}
     )
@@ -136,4 +136,4 @@ def test_usage_records_tenant_boundary_without_stripe_customer():
         },
     )
     assert response.status_code == 201
-    assert response.json()["tenant_id"] == "tenant-test"
+    assert response.json()["tenant_id"] == "tenant-usage-test"
