@@ -63,7 +63,9 @@ class LegacyEventAdapter:
     @staticmethod
     def _timestamp(value: Any) -> datetime:
         if value is None:
-            return datetime.now(timezone.utc)
+            raise LegacyEventAdapterError(
+                "occurred_at is required for deterministic adaptation"
+            )
         if isinstance(value, datetime):
             result = value
         else:
@@ -81,6 +83,20 @@ class LegacyEventAdapter:
         if isinstance(raw, dict):
             return dict(raw)
         return {"value": raw} if raw is not None else {}
+
+    @staticmethod
+    def _sequence(value: Any) -> int:
+        if isinstance(value, bool) or value is None:
+            raise LegacyEventAdapterError(
+                "legacy event requires an explicit aggregate sequence"
+            )
+        try:
+            sequence = int(value)
+        except (TypeError, ValueError) as exc:
+            raise LegacyEventAdapterError("sequence must be a positive integer") from exc
+        if sequence < 1 or str(value).strip() != str(sequence):
+            raise LegacyEventAdapterError("sequence must be a positive integer")
+        return sequence
 
     @classmethod
     def adapt(
@@ -100,7 +116,7 @@ class LegacyEventAdapter:
 
         tenant_uuid, legacy_tenant_id = cls._tenant_id(event.get("tenant_id"))
         if authenticated_tenant_id is not None:
-            auth_uuid = cls._uuid(authenticated_tenant_id, "authenticated_tenant_id")
+            auth_uuid, _ = cls._tenant_id(authenticated_tenant_id)
             if auth_uuid != tenant_uuid:
                 raise LegacyEventAdapterError("legacy tenant_id does not match authenticated tenant")
             tenant_uuid = auth_uuid
@@ -153,7 +169,7 @@ class LegacyEventAdapter:
             causation_id=optional_uuid("causation_id"),
             aggregate_type=mapping.aggregate_type,
             aggregate_id=aggregate_uuid,
-            sequence=int(event.get("sequence", 1)),
+            sequence=cls._sequence(event.get("sequence")),
             producer=cls.producer,
             payload=LegacyEventAdapter._payload(event),
             metadata=metadata,
