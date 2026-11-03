@@ -75,7 +75,7 @@ def runtime_status(tenant: Tenant = Depends(require_tenant)):
         "execution_count": sum(1 for event in snapshot.values() if event.get("type") == "workflow.requested"),
         "event_count": len(snapshot),
         "replay_ready": any(event.get("type") == "workflow.requested" for event in snapshot.values()),
-        "verification": "manifest-backed",
+        "verification": "not_configured",
     }
 
 
