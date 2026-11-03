@@ -1,23 +1,29 @@
 from __future__ import annotations
 
+import asyncio
+import base64
 import hashlib
 import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from uuid import NAMESPACE_URL, UUID, uuid5
 
-from fastapi import Depends, FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request, WebSocket, WebSocketDisconnect
 from pydantic import BaseModel, Field
 
-from apps.api.auth import Tenant, require_scope, require_tenant
+from apps.api.auth import Tenant, _token_map, require_scope, require_tenant
 from apps.api.billing import create_checkout_session, report_meter_event, verify_webhook_signature
 from apps.api.registry import get_package, list_packages, manifest_digest
 from packages.runtime.src.engine import RuntimeEngine
 from packages.runtime.src.ledger import PostgresEventLedger
+from packages.contracts.src.envelope import EventEnvelope, EventIntegrity
+from packages.runtime.src.journal import EventIntegrityError, EventSequenceConflict, PostgresEventJournal
 
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
 _database_url = os.getenv("DATABASE_URL", "").strip()
 engine = RuntimeEngine(ledger=PostgresEventLedger(_database_url) if _database_url else None)
+event_journal = PostgresEventJournal(_database_url) if _database_url else None
 
 
 class WorkflowRun(BaseModel):
@@ -40,6 +46,11 @@ class CheckoutRequest(BaseModel):
     version: str | None = None
     success_url: str
     cancel_url: str
+
+
+class AgentRunRequest(BaseModel):
+    run_id: UUID
+    payload: dict[str, Any] = Field(default_factory=dict)
 
 
 def event_id_for(workflow: str, payload: dict[str, Any]) -> str:
@@ -91,6 +102,115 @@ def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
         raise HTTPException(status_code=404, detail="event not found")
     replay_event = {**event, "id": replay_id_for(event["id"]), "type": "workflow.replayed", "replayed_from": event["id"], "timestamp": now()}
     return {**emit(replay_event), "event": replay_event}
+
+
+@app.post("/v1/agent/runs", status_code=201)
+def submit_agent_run(request: AgentRunRequest, tenant: Tenant = Depends(require_tenant)):
+    """Persist an agent run request to the canonical journal; never fall back to memory."""
+    require_scope(tenant, "executions:write")
+    if event_journal is None:
+        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is not configured")
+
+    tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant.id}")
+    agent_uuid = uuid5(NAMESPACE_URL, "tinyd:agent:default")
+    event_id = uuid5(tenant_uuid, f"tinyd:run:{request.run_id}:v1")
+
+    existing = event_journal.get(event_id, tenant_uuid)
+    if existing is not None:
+        if existing.payload != request.payload or existing.run_id != request.run_id:
+            raise HTTPException(status_code=409, detail="run_id already exists with different content")
+        return {
+            "status": "accepted",
+            "idempotent": True,
+            "tenant_id": tenant.id,
+            "event": existing.model_dump(mode="json"),
+        }
+
+    event = EventEnvelope(
+        event_id=event_id,
+        event_type="run.requested",
+        event_version=1,
+        tenant_id=tenant_uuid,
+        agent_id=agent_uuid,
+        run_id=request.run_id,
+        correlation_id=uuid5(request.run_id, "tinyd:correlation:v1"),
+        aggregate_type="run",
+        aggregate_id=request.run_id,
+        sequence=1,
+        producer="tinyd-agent-api",
+        payload=request.payload,
+        integrity=EventIntegrity(previous_digest=None, digest="pending"),
+    )
+    event = event.model_copy(update={
+        "integrity": EventIntegrity(
+            previous_digest=None,
+            digest=event_journal.calculate_digest(event, None),
+        )
+    })
+    try:
+        persisted = event_journal.append(event)
+    except EventIntegrityError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except EventSequenceConflict as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "status": "accepted",
+        "idempotent": False,
+        "tenant_id": tenant.id,
+        "event": persisted.model_dump(mode="json"),
+    }
+
+
+
+@app.websocket("/v1/agent/runs/{run_id}/events")
+async def agent_run_events(websocket: WebSocket, run_id: UUID, after_sequence: int = 0):
+    """Stream persisted run events over WebSocket; PostgreSQL journal remains authoritative."""
+    authorization = websocket.headers.get("authorization", "")
+    token = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+    offered_protocols = websocket.scope.get("subprotocols", [])
+    if not token:
+        encoded = next(
+            (protocol.removeprefix("tinyd.bearer.") for protocol in offered_protocols
+             if protocol.startswith("tinyd.bearer.")),
+            None,
+        )
+        if encoded:
+            try:
+                token = base64.urlsafe_b64decode(encoded + "=" * (-len(encoded) % 4)).decode("utf-8")
+            except (ValueError, UnicodeDecodeError):
+                token = ""
+    if not token:
+        await websocket.close(code=4401, reason="bearer credential required")
+        return
+    token_digest = hashlib.sha256(token.encode()).hexdigest()
+    identity = _token_map().get(token_digest)
+    if not isinstance(identity, dict):
+        await websocket.close(code=4401, reason="invalid tenant credentials")
+        return
+    scopes = identity.get("scopes", [])
+    tenant_id = identity.get("tenant_id")
+    if not isinstance(tenant_id, str) or not isinstance(scopes, list):
+        await websocket.close(code=4401, reason="invalid tenant credentials")
+        return
+    if "events:read" not in scopes:
+        await websocket.close(code=4403, reason="missing scope: events:read")
+        return
+    if event_journal is None:
+        await websocket.close(code=1013, reason="canonical PostgreSQL journal is not configured")
+        return
+    tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant_id.strip()}")
+    selected_protocol = "tinyd.events.v1" if "tinyd.events.v1" in offered_protocols else None
+    await websocket.accept(subprotocol=selected_protocol)
+    cursor = max(0, after_sequence)
+    try:
+        while True:
+            history = event_journal.history_after(tenant_uuid, "run", run_id, cursor)
+            for event in history:
+                await websocket.send_json(event.model_dump(mode="json"))
+                cursor = event.sequence
+            await asyncio.sleep(0.5)
+    except WebSocketDisconnect:
+        return
 
 
 @app.get("/v1/marketplace/packages")
