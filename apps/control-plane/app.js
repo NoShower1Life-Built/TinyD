@@ -1,134 +1,185 @@
-const API_BASE = window.NEXORA_API_URL || '/';
-
+const API_BASE = window.NEXORA_API_URL || "/";
 const $ = (selector) => document.querySelector(selector);
-const runButton = $('#runBtn');
-const replayButton = $('#replayBtn');
-const refreshButton = $('#refreshBtn');
+const tokenInput = $("#tenantToken");
+const connectButton = $("#connectBtn");
+const runButton = $("#runBtn");
+const replayButton = $("#replayBtn");
+const refreshButton = $("#refreshBtn");
+let accessToken = "";
+let tenantConnected = false;
+
+function setText(selector, value) {
+  const node = $(selector);
+  if (node) node.textContent = String(value);
+}
 
 async function request(path, options = {}) {
-  const response = await fetch(new URL(path.replace(/^\//, ''), new URL(API_BASE, window.location.href)), {
-    headers: { 'content-type': 'application/json', ...(options.headers || {}) },
-    ...options,
-  });
+  const headers = {
+    ...(options.headers || {}),
+    ...(accessToken ? { Authorization: "Bearer " + accessToken } : {}),
+  };
+  const response = await fetch(
+    new URL((path.startsWith("/") ? path.slice(1) : path), new URL(API_BASE, window.location.href)),
+    { ...options, headers: { "content-type": "application/json", ...headers } },
+  );
   if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(detail || `HTTP ${response.status}`);
+    let detail = "HTTP " + response.status;
+    try {
+      const body = await response.json();
+      detail = body.detail || detail;
+    } catch {
+      // Keep the HTTP status when the response is not JSON.
+    }
+    throw new Error(detail);
   }
   return response.json();
 }
 
-function setText(selector, value) {
-  const node = $(selector);
-  if (node) node.textContent = value;
+function setConnected(connected, detail = "") {
+  tenantConnected = connected;
+  setText("#healthText", connected ? "Tenant connected" : "Disconnected");
+  setText("#healthDetail", detail || (connected ? "authenticated runtime access" : "connect with a tenant token"));
+  setText("#runtimeMode", connected ? "CONNECTED" : "AUTH REQUIRED");
+  setText("#statusPill", connected ? "CONNECTED" : "LOCKED");
+  runButton.disabled = !connected;
+  replayButton.disabled = !connected;
+  refreshButton.disabled = !connected;
 }
 
 function renderStatus(status) {
-  setText('#activeExecutions', status.execution_count);
-  setText('#eventCount', status.event_count);
-  setText('#replayReady', status.replay_ready ? 'READY' : 'EMPTY');
-  setText('#verification', status.verification.replaceAll('_', ' '));
-  setText('#runtimeMode', status.mode.toUpperCase());
-  setText('#healthText', 'Runtime healthy');
-  setText('#healthDetail', `${status.event_count} events loaded`);
-  setText('#statusPill', 'CONNECTED');
-  setText('#statusValue', status.verification === 'not_configured' ? 'N/A' : status.verification);
-  setText('#apiCheck', 'PASS');
-  setText('#engineCheck', 'PASS');
-  setText('#replayCheck', status.replay_ready ? 'READY' : 'EMPTY');
+  setText("#activeExecutions", status.execution_count);
+  setText("#eventCount", status.event_count);
+  setText("#replayReady", status.replay_ready ? "READY" : "EMPTY");
+  setText("#verification", status.verification.replaceAll("_", " "));
+  setText("#runtimeMode", status.mode.toUpperCase());
+  setText("#healthText", "Tenant connected");
+  setText("#healthDetail", status.persistence + " · " + status.event_count + " tenant events");
+  setText("#statusPill", "CONNECTED");
+  setText("#statusValue", status.verification === "not_configured" ? "N/A" : status.verification);
+  setText("#apiCheck", "PASS");
+  setText("#engineCheck", "PASS");
+  setText("#replayCheck", status.replay_ready ? "READY" : "EMPTY");
+}
+
+function appendCell(row, value, className = "") {
+  const cell = document.createElement("td");
+  if (className) cell.className = className;
+  cell.textContent = value == null ? "" : String(value);
+  row.append(cell);
 }
 
 function renderEvents(events) {
-  const rows = $('#eventRows');
+  const rows = $("#eventRows");
   if (!rows) return;
+  rows.replaceChildren();
   if (!events.length) {
-    rows.innerHTML = '<tr><td colspan="6" class="empty-table">No runtime events recorded.</td></tr>';
-    setText('#activityState', 'No executions have been submitted.');
-    setText('#activityStatus', 'waiting');
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.className = "empty-table";
+    cell.textContent = "No tenant events recorded.";
+    row.append(cell);
+    rows.append(row);
+    setText("#activityState", "No executions have been submitted.");
+    setText("#activityStatus", "waiting");
     return;
   }
-  rows.innerHTML = events.map((event) => `
-    <tr>
-      <td class="mono">${event.id}</td>
-      <td>${event.type}</td>
-      <td>${event.workflow}</td>
-      <td><span class="tag live">accepted</span></td>
-      <td>${event.timestamp}</td>
-      <td>→</td>
-    </tr>`).join('');
-  setText('#activityState', `${events.length} runtime event${events.length === 1 ? '' : 's'} loaded.`);
-  setText('#activityStatus', 'connected');
+  for (const event of events) {
+    const row = document.createElement("tr");
+    appendCell(row, event.id, "mono");
+    appendCell(row, event.type);
+    appendCell(row, event.workflow || event.package_id || "—");
+    appendCell(row, event.type === "workflow.replayed" ? "replayed" : "recorded");
+    appendCell(row, event.timestamp);
+    rows.append(row);
+  }
+  setText("#activityState", events.length + " tenant event" + (events.length === 1 ? "" : "s") + " loaded.");
+  setText("#activityStatus", "connected");
 }
 
 async function refresh() {
+  if (!accessToken) {
+    setConnected(false);
+    return;
+  }
   try {
-    const [status, eventResult] = await Promise.all([
-      request('v1/runtime/status'),
-      request('v1/events'),
-    ]);
-    renderStatus(status);
-    renderEvents(eventResult.events);
+    const results = await Promise.all([request("v1/runtime/status"), request("v1/events")]);
+    renderStatus(results[0]);
+    renderEvents(results[1].events);
+    setConnected(true, results[1].tenant_id + " · " + results[0].persistence);
   } catch (error) {
-    setText('#healthText', 'Runtime unavailable');
-    setText('#healthDetail', error.message);
-    setText('#runtimeMode', 'OFFLINE');
-    setText('#statusPill', 'OFFLINE');
-    setText('#statusValue', 'OFFLINE');
-    setText('#apiCheck', 'FAIL');
-    setText('#engineCheck', 'UNKNOWN');
-    setText('#replayCheck', 'UNKNOWN');
+    setConnected(false, error.message);
+    setText("#statusValue", "LOCKED");
+    setText("#apiCheck", "AUTH ERROR");
+    setText("#engineCheck", "UNKNOWN");
+    setText("#replayCheck", "UNKNOWN");
   }
 }
 
+async function connectTenant() {
+  const candidate = tokenInput.value.trim();
+  if (!candidate) {
+    setConnected(false, "Enter a tenant bearer token.");
+    tokenInput.focus();
+    return;
+  }
+  accessToken = candidate;
+  connectButton.disabled = true;
+  connectButton.textContent = "Connecting…";
+  await refresh();
+  connectButton.disabled = false;
+  tenantConnected = !runButton.disabled;
+  connectButton.textContent = tenantConnected ? "Connected" : "Connect";
+  if (!tenantConnected) accessToken = "";
+}
+
 async function runWorkflow() {
-  const workflow = window.prompt('Workflow name', 'nexora-check');
+  const workflow = window.prompt("Workflow name", "nexora-check");
   if (!workflow) return;
   runButton.disabled = true;
-  runButton.textContent = 'Submitting…';
+  runButton.textContent = "Submitting…";
   try {
-    await request('v1/executions', {
-      method: 'POST',
-      body: JSON.stringify({ workflow, payload: {} }),
-    });
+    await request("v1/executions", { method: "POST", body: JSON.stringify({ workflow, payload: {} }) });
     await refresh();
-    runButton.textContent = 'Submitted';
   } catch (error) {
-    runButton.textContent = 'Failed';
-    window.alert(`Execution submission failed: ${error.message}`);
+    window.alert("Execution submission failed: " + error.message);
   } finally {
-    setTimeout(() => { runButton.textContent = 'Run workflow'; runButton.disabled = false; }, 1000);
+    runButton.textContent = "Run workflow";
+    runButton.disabled = !tenantConnected;
   }
 }
 
 async function replayLatest() {
+  replayButton.disabled = true;
+  replayButton.textContent = "Replaying…";
   try {
-    const result = await request('v1/events');
-    const latest = result.events.at(-1);
+    const result = await request("v1/events");
+    const latest = [...result.events].reverse().find((event) => event.type === "workflow.requested");
     if (!latest) {
-      window.alert('No runtime event is available for replay.');
+      window.alert("No workflow request is available for replay.");
       return;
     }
-    replayButton.disabled = true;
-    replayButton.textContent = 'Replaying…';
-    await request('v1/replay', {
-      method: 'POST',
-      body: JSON.stringify({ event_id: latest.id }),
-    });
+    await request("v1/replay", { method: "POST", body: JSON.stringify({ event_id: latest.id }) });
     await refresh();
-    replayButton.textContent = 'Replay complete';
   } catch (error) {
-    replayButton.textContent = 'Replay failed';
-    window.alert(`Replay failed: ${error.message}`);
+    window.alert("Replay failed: " + error.message);
   } finally {
-    setTimeout(() => { replayButton.textContent = 'Replay latest'; replayButton.disabled = false; }, 1000);
+    replayButton.textContent = "Replay latest";
+    replayButton.disabled = !tenantConnected;
   }
 }
 
-runButton?.addEventListener('click', runWorkflow);
-replayButton?.addEventListener('click', replayLatest);
-refreshButton?.addEventListener('click', refresh);
-document.querySelectorAll('nav a').forEach((link) => link.addEventListener('click', () => {
-  document.querySelectorAll('nav a').forEach((a) => a.classList.remove('active'));
-  link.classList.add('active');
-}));
-
-refresh();
+connectButton?.addEventListener("click", connectTenant);
+tokenInput?.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") connectTenant();
+});
+runButton?.addEventListener("click", runWorkflow);
+replayButton?.addEventListener("click", replayLatest);
+refreshButton?.addEventListener("click", refresh);
+document.querySelectorAll("nav a").forEach((link) => {
+  link.addEventListener("click", () => {
+    document.querySelectorAll("nav a").forEach((item) => item.classList.remove("active"));
+    link.classList.add("active");
+  });
+});
+setConnected(false);

@@ -65,9 +65,18 @@ def health():
 
 
 @app.get("/v1/runtime/status")
-def runtime_status():
-    snapshot = engine.snapshot()
-    return {"service": "tinyd-runtime", "mode": "connected", "persistence": "postgres" if engine.ledger else "memory", "execution_count": len(snapshot), "event_count": len(snapshot), "replay_ready": bool(snapshot), "verification": "manifest-backed"}
+def runtime_status(tenant: Tenant = Depends(require_tenant)):
+    require_scope(tenant, "events:read")
+    snapshot = engine.tenant_snapshot(tenant.id)
+    return {
+        "service": "tinyd-runtime",
+        "mode": "connected",
+        "persistence": "postgres" if engine.ledger else "memory",
+        "execution_count": sum(1 for event in snapshot.values() if event.get("type") == "workflow.requested"),
+        "event_count": len(snapshot),
+        "replay_ready": any(event.get("type") == "workflow.requested" for event in snapshot.values()),
+        "verification": "not_configured",
+    }
 
 
 @app.get("/v1/events")
@@ -79,7 +88,14 @@ def events(tenant: Tenant = Depends(require_tenant)):
 @app.post("/v1/executions", status_code=201)
 def run_workflow(request: WorkflowRun, tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "executions:write")
-    event = {"id": event_id_for(request.workflow, {"tenant_id": tenant.id, "payload": request.payload}), "type": "workflow.requested", "tenant_id": tenant.id, "workflow": request.workflow, "payload": request.payload, "timestamp": now()}
+    event = {
+        "id": event_id_for(request.workflow, {"tenant_id": tenant.id, "payload": request.payload}),
+        "type": "workflow.requested",
+        "tenant_id": tenant.id,
+        "workflow": request.workflow,
+        "payload": request.payload,
+        "timestamp": now(),
+    }
     return {**emit(event), "event": event}
 
 
@@ -89,7 +105,13 @@ def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
     event = engine.get(request.event_id)
     if event is None or event.get("tenant_id") != tenant.id:
         raise HTTPException(status_code=404, detail="event not found")
-    replay_event = {**event, "id": replay_id_for(event["id"]), "type": "workflow.replayed", "replayed_from": event["id"], "timestamp": now()}
+    replay_event = {
+        **event,
+        "id": replay_id_for(event["id"]),
+        "type": "workflow.replayed",
+        "replayed_from": event["id"],
+        "timestamp": now(),
+    }
     return {**emit(replay_event), "event": replay_event}
 
 
@@ -115,7 +137,15 @@ def install_package(package_id: str, version: str | None = None, tenant: Tenant 
         raise HTTPException(status_code=404, detail="package not found")
     if package.get("verification", {}).get("status") != "verified":
         raise HTTPException(status_code=409, detail="package verification gate has not passed")
-    event = {"id": event_id_for("marketplace.install", {"tenant_id": tenant.id, "package_id": package["id"], "version": package["version"]}), "type": "marketplace.package.installed", "tenant_id": tenant.id, "package_id": package["id"], "version": package["version"], "manifest_digest": manifest_digest(package), "timestamp": now()}
+    event = {
+        "id": event_id_for("marketplace.install", {"tenant_id": tenant.id, "package_id": package["id"], "version": package["version"]}),
+        "type": "marketplace.package.installed",
+        "tenant_id": tenant.id,
+        "package_id": package["id"],
+        "version": package["version"],
+        "manifest_digest": manifest_digest(package),
+        "timestamp": now(),
+    }
     emit(event)
     return {"status": "installed", "tenant_id": tenant.id, "package": package, "event_id": event["id"]}
 
@@ -126,11 +156,20 @@ def record_usage(request: UsageRequest, tenant: Tenant = Depends(require_tenant)
     package = get_package(request.package_id)
     if not package:
         raise HTTPException(status_code=404, detail="package not found")
-    event = {"id": event_id_for("marketplace.usage", {"tenant_id": tenant.id, **request.model_dump()}), "type": "marketplace.usage.recorded", "tenant_id": tenant.id, **request.model_dump(), "timestamp": now()}
+    event = {
+        "id": event_id_for("marketplace.usage", {"tenant_id": tenant.id, **request.model_dump()}),
+        "type": "marketplace.usage.recorded",
+        "tenant_id": tenant.id,
+        **request.model_dump(),
+        "timestamp": now(),
+    }
     emit(event)
     meter = package.get("billing", {}).get("stripe_meter_event_name")
     if meter:
-        customer_id = next((e.get("stripe_customer_id") for e in reversed(list(engine.tenant_snapshot(tenant.id).values())) if e.get("type") == "billing.customer.linked"), None)
+        customer_id = next(
+            (e.get("stripe_customer_id") for e in reversed(list(engine.tenant_snapshot(tenant.id).values())) if e.get("type") == "billing.customer.linked"),
+            None,
+        )
         if customer_id:
             try:
                 report_meter_event(meter_event_name=meter, customer_id=customer_id, value=request.quantity, identifier=event["id"])
@@ -166,8 +205,21 @@ async def marketplace_billing_webhook(request: Request):
     if not isinstance(metadata, dict):
         metadata = {}
     tenant_id = metadata.get("tenant_id") or data.get("client_reference_id")
-    event = {"id": "bill_" + hashlib.sha256(payload).hexdigest()[:16], "type": "billing.webhook.received", "stripe_event_type": event_type, "tenant_id": tenant_id, "payload": data, "timestamp": now()}
+    event = {
+        "id": "bill_" + hashlib.sha256(payload).hexdigest()[:16],
+        "type": "billing.webhook.received",
+        "stripe_event_type": event_type,
+        "tenant_id": tenant_id,
+        "payload": data,
+        "timestamp": now(),
+    }
     emit(event)
     if tenant_id and obj.get("customer"):
-        emit({"id": "cust_" + hashlib.sha256(f"{tenant_id}:{obj['customer']}".encode()).hexdigest()[:16], "type": "billing.customer.linked", "tenant_id": tenant_id, "stripe_customer_id": obj["customer"], "timestamp": now()})
+        emit({
+            "id": "cust_" + hashlib.sha256(f"{tenant_id}:{obj['customer']}".encode()).hexdigest()[:16],
+            "type": "billing.customer.linked",
+            "tenant_id": tenant_id,
+            "stripe_customer_id": obj["customer"],
+            "timestamp": now(),
+        })
     return {"received": True, "event_id": event["id"]}
