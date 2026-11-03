@@ -18,10 +18,10 @@ def setup_function():
     os.environ.pop("STRIPE_WEBHOOK_SECRET", None)
 
 
-def tenant_token(scopes=None):
+def tenant_token(scopes=None, tenant_id="tenant-test"):
     token = "tinyd-test-token"
     token_hash = hashlib.sha256(token.encode()).hexdigest()
-    os.environ["TINYD_TENANT_TOKENS"] = json.dumps({token_hash: {"tenant_id": "tenant-test", "scopes": scopes or []}})
+    os.environ["TINYD_TENANT_TOKENS"] = json.dumps({token_hash: {"tenant_id": tenant_id, "scopes": scopes or []}})
     return token
 
 
@@ -54,7 +54,7 @@ def test_install_enforces_scope_and_records_tenant_event():
         headers={"Authorization": f"Bearer {token}"},
     )
     assert response.status_code == 201
-    assert response.json()["tenant_id"] == "tenant-test"
+    assert response.json()["tenant_id"] == "tenant-usage-test"
     events = client.get(
         "/v1/events", headers={"Authorization": f"Bearer {tenant_token(['events:read'])}"}
     )
@@ -125,7 +125,7 @@ def test_webhook_endpoint_requires_valid_signature(monkeypatch):
 
 
 def test_usage_records_tenant_boundary_without_stripe_customer():
-    token = tenant_token(["usage:write"])
+    token = tenant_token(["usage:write"], tenant_id="tenant-usage-test")
     response = client.post(
         "/v1/marketplace/usage",
         headers={"Authorization": f"Bearer {token}"},
