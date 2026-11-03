@@ -46,8 +46,12 @@ class _SynchronizedLedger:
 
     def get(self, event_id):
         if not getattr(self.local, "initial_read_done", False):
+            # Read before synchronizing: both workers must observe the missing row
+            # before either is allowed to return to RuntimeEngine and append.
+            result = self.ledger.get(event_id)
             self.local.initial_read_done = True
             self.barrier.wait(timeout=10)
+            return result
         return self.ledger.get(event_id)
 
     def append(self, event):
