@@ -61,3 +61,17 @@ def test_ledger_rejection_without_stored_event_fails_closed():
 
     with pytest.raises(RuntimeError, match="persisted event could not be read"):
         engine.execute(make_event())
+
+class FailingLedger:
+    def get(self, event_id):
+        return None
+
+    def append(self, event):
+        raise ConnectionError("database unavailable")
+
+
+def test_database_failure_does_not_report_acceptance():
+    engine = RuntimeEngine(ledger=FailingLedger())
+
+    with pytest.raises(ConnectionError, match="database unavailable"):
+        engine.execute(make_event())
