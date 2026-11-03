@@ -6,6 +6,7 @@ const runButton = $("#runBtn");
 const replayButton = $("#replayBtn");
 const refreshButton = $("#refreshBtn");
 let accessToken = "";
+let tenantConnected = false;
 
 function setText(selector, value) {
   const node = $(selector);
@@ -35,6 +36,7 @@ async function request(path, options = {}) {
 }
 
 function setConnected(connected, detail = "") {
+  tenantConnected = connected;
   setText("#healthText", connected ? "Tenant connected" : "Disconnected");
   setText("#healthDetail", detail || (connected ? "authenticated runtime access" : "connect with a tenant token"));
   setText("#runtimeMode", connected ? "CONNECTED" : "AUTH REQUIRED");
@@ -126,8 +128,9 @@ async function connectTenant() {
   connectButton.textContent = "Connecting…";
   await refresh();
   connectButton.disabled = false;
-  connectButton.textContent = accessToken && !runButton.disabled ? "Connected" : "Connect";
-  if (runButton.disabled) accessToken = "";
+  tenantConnected = !runButton.disabled;
+  connectButton.textContent = tenantConnected ? "Connected" : "Connect";
+  if (!tenantConnected) accessToken = "";
 }
 
 async function runWorkflow() {
@@ -142,7 +145,7 @@ async function runWorkflow() {
     window.alert("Execution submission failed: " + error.message);
   } finally {
     runButton.textContent = "Run workflow";
-    runButton.disabled = !accessToken;
+    runButton.disabled = !tenantConnected;
   }
 }
 
@@ -162,7 +165,7 @@ async function replayLatest() {
     window.alert("Replay failed: " + error.message);
   } finally {
     replayButton.textContent = "Replay latest";
-    replayButton.disabled = !accessToken;
+    replayButton.disabled = !tenantConnected;
   }
 }
 
