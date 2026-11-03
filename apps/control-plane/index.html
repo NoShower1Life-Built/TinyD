@@ -14,52 +14,56 @@
       <nav aria-label="Primary">
         <a class="active" href="#overview">Overview</a>
         <a href="#executions">Executions</a>
-        <a href="#workflows">Workflows</a>
         <a href="#events">Event Ledger</a>
-        <a href="#replay">Replay</a>
         <a href="#verification">Verification</a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="system-state"><span class="dot" id="healthDot"></span><div><b id="healthText">Connecting</b><small id="healthDetail">runtime API</small></div></div>
-        <a href="#settings">Settings</a>
+        <div class="system-state"><span class="dot" id="healthDot"></span><div><b id="healthText">Disconnected</b><small id="healthDetail">connect with a tenant token</small></div></div>
+        <a href="#connection">Connection</a>
       </div>
     </aside>
-
     <main class="main">
       <header class="topbar">
         <div><span class="eyebrow">EXECUTION RUNTIME</span><h1>Overview</h1></div>
-        <div class="top-actions"><button class="icon-btn" aria-label="Search">⌕</button><button class="secondary" id="replayBtn">Replay latest</button><button class="primary" id="runBtn">Run workflow</button></div>
+        <div class="top-actions">
+          <button class="secondary" id="replayBtn" disabled>Replay latest</button>
+          <button class="primary" id="runBtn" disabled>Run workflow</button>
+        </div>
       </header>
-
       <section id="overview" class="content">
         <div class="hero-row">
-          <div><h2>Deterministic execution, at a glance.</h2><p>Live control-plane state is read from the TinyD runtime API. No fabricated execution metrics are presented.</p></div>
-          <div class="runtime-badge"><span class="dot" id="runtimeDot"></span> <span id="runtimeMode">CONNECTING</span> <span class="mono">main</span></div>
+          <div><h2>Deterministic execution, at a glance.</h2><p>Tenant-scoped runtime state. Connect with a configured bearer token to inspect events and submit workflows.</p></div>
+          <div class="runtime-badge"><span class="dot" id="runtimeDot"></span><span id="runtimeMode">AUTH REQUIRED</span></div>
         </div>
-
+        <section class="panel connection-panel" id="connection">
+          <div class="panel-head"><div><span class="eyebrow">AUTHENTICATION</span><h3>Connect tenant workspace</h3></div><span class="tag neutral">TOKEN NOT STORED</span></div>
+          <div class="connection-controls">
+            <label for="tenantToken">Tenant bearer token</label>
+            <input id="tenantToken" type="password" autocomplete="off" spellcheck="false" placeholder="Paste configured tenant token" />
+            <button class="primary" id="connectBtn">Connect</button>
+          </div>
+          <p class="muted-note">The token remains in page memory only. Configure its SHA-256 hash and tenant scopes in TINYD_TENANT_TOKENS on the API.</p>
+        </section>
         <div class="metrics">
-          <article><span>Active executions</span><strong id="activeExecutions">—</strong><small>runtime-derived</small></article>
-          <article><span>Events</span><strong id="eventCount">—</strong><small>runtime-derived</small></article>
-          <article><span>Replay readiness</span><strong id="replayReady">—</strong><small>runtime-derived</small></article>
-          <article><span>Verification</span><strong id="verification">—</strong><small>reported by runtime</small></article>
+          <article><span>Workflow requests</span><strong id="activeExecutions">—</strong><small>tenant-scoped ledger count</small></article>
+          <article><span>Events</span><strong id="eventCount">—</strong><small>tenant-scoped ledger count</small></article>
+          <article><span>Replay readiness</span><strong id="replayReady">—</strong><small>based on recorded workflow events</small></article>
+          <article><span>Verification</span><strong id="verification">—</strong><small>runtime-reported status</small></article>
         </div>
-
         <div class="grid-main">
           <section class="panel execution-panel" id="executions">
-            <div class="panel-head"><div><span class="eyebrow">LIVE STATE</span><h3>Execution activity</h3></div><span class="tag neutral" id="activityStatus">waiting</span></div>
-            <div class="empty-state" id="activityState">No executions have been submitted.</div>
+            <div class="panel-head"><div><span class="eyebrow">LIVE STATE</span><h3>Execution activity</h3></div><span class="tag neutral" id="activityStatus">locked</span></div>
+            <div class="empty-state" id="activityState">Connect a tenant workspace to load runtime events.</div>
           </section>
-
           <section class="panel integrity" id="verification">
-            <div class="panel-head"><div><span class="eyebrow">INTEGRITY</span><h3>Runtime status</h3></div><span class="status-pill" id="statusPill">UNKNOWN</span></div>
+            <div class="panel-head"><div><span class="eyebrow">INTEGRITY</span><h3>Runtime status</h3></div><span class="status-pill" id="statusPill">LOCKED</span></div>
             <div class="ring" id="statusRing"><div><strong id="statusValue">—</strong><small>verification</small></div></div>
             <div class="checks"><div><span class="check">•</span> Runtime API <b id="apiCheck">—</b></div><div><span class="check">•</span> Execution engine <b id="engineCheck">—</b></div><div><span class="check">•</span> Replay readiness <b id="replayCheck">—</b></div><div><span class="check">•</span> Formal verification <b>NOT CONFIGURED</b></div></div>
           </section>
         </div>
-
         <section class="panel" id="events">
-          <div class="panel-head"><div><span class="eyebrow">EVENT LEDGER</span><h3>Runtime events</h3></div><button class="ghost" id="refreshBtn">Refresh →</button></div>
-          <div class="table-wrap"><table><thead><tr><th>Event ID</th><th>Type</th><th>Workflow</th><th>State</th><th>Timestamp</th><th></th></tr></thead><tbody id="eventRows"><tr><td colspan="6" class="empty-table">Loading runtime events…</td></tr></tbody></table></div>
+          <div class="panel-head"><div><span class="eyebrow">EVENT LEDGER</span><h3>Tenant runtime events</h3></div><button class="ghost" id="refreshBtn" disabled>Refresh →</button></div>
+          <div class="table-wrap"><table><thead><tr><th>Event ID</th><th>Type</th><th>Workflow / Resource</th><th>State</th><th>Timestamp</th></tr></thead><tbody id="eventRows"><tr><td colspan="5" class="empty-table">Connect a tenant workspace to load events.</td></tr></tbody></table></div>
         </section>
       </section>
     </main>
