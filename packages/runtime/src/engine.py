@@ -41,3 +41,23 @@ class RuntimeEngine:
 
         self.state[event_id] = dict(event)
         return {"status": "accepted", "event_id": event_id}
+
+    def get(self, event_id: str) -> dict[str, Any] | None:
+        if self.ledger is not None:
+            return self.ledger.get(event_id)
+        event = self.state.get(event_id)
+        return dict(event) if event is not None else None
+
+    def snapshot(self) -> dict[str, Any]:
+        if self.ledger is not None:
+            return self.ledger.snapshot()
+        return {event_id: dict(event) for event_id, event in self.state.items()}
+
+    def tenant_snapshot(self, tenant_id: str) -> dict[str, Any]:
+        if self.ledger is not None:
+            return self.ledger.tenant_snapshot(tenant_id)
+        return {
+            event_id: dict(event)
+            for event_id, event in self.state.items()
+            if event.get("tenant_id") == tenant_id
+        }
