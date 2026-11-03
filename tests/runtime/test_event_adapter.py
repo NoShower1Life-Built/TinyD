@@ -19,6 +19,7 @@ def legacy_event(**overrides):
         "agent_id": AGENT,
         "run_id": RUN,
         "correlation_id": "7b0b6d8e-9f1e-4b15-91e7-48e3c4fd9a20",
+        "sequence": 1,
         "occurred_at": "2026-09-11T20:00:00Z",
         "payload": {"prompt": "build the plan"},
     }
@@ -100,3 +101,29 @@ def test_authenticated_matching_uuid_tenant_is_accepted():
 def test_timezone_is_required_for_explicit_timestamp():
     with pytest.raises(LegacyEventAdapterError, match="timezone"):
         LegacyEventAdapter.adapt(legacy_event(occurred_at="2026-09-11T20:00:00"))
+
+
+
+def test_authenticated_matching_non_uuid_tenant_is_accepted():
+    envelope = LegacyEventAdapter.adapt(
+        legacy_event(),
+        authenticated_tenant_id=TENANT,
+    )
+
+    assert envelope.tenant_id == LegacyEventAdapter.adapt(legacy_event()).tenant_id
+
+
+def test_missing_timestamp_is_rejected_for_determinism():
+    event = legacy_event()
+    event.pop("occurred_at")
+
+    with pytest.raises(LegacyEventAdapterError, match="occurred_at is required"):
+        LegacyEventAdapter.adapt(event)
+
+
+def test_missing_aggregate_sequence_is_rejected():
+    event = legacy_event()
+    event.pop("sequence")
+
+    with pytest.raises(LegacyEventAdapterError, match="explicit aggregate sequence"):
+        LegacyEventAdapter.adapt(event)
