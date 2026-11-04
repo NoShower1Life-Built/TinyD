@@ -290,3 +290,51 @@ def test_concurrent_workers_claim_distinct_tasks():
     assert all(claim is not None for claim in claims)
     assert len({claim["event_id"] for claim in claims}) == 2
     assert {claim["run_id"] for claim in claims} == {UUID(value) for value in run_ids}
+
+
+
+def test_reconciles_legacy_terminal_row_missing_journal_event():
+    import psycopg
+
+    tenant_id = f"worker-reconcile-{uuid4()}"
+    token = token_for(tenant_id)
+    run_id = str(uuid4())
+    response = client.post(
+        "/v1/agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"run_id": run_id, "payload": {"operation": "sha256", "value": "legacy"}},
+    )
+    assert response.status_code == 201, response.text
+    dsn = os.environ["DATABASE_URL"]
+    legacy_worker = DurableWorker(dsn, worker_id=f"legacy-{uuid4()}")
+    claim = legacy_worker.claim_next()
+    assert claim is not None
+    legacy_worker._append_started(claim)
+
+    # Reproduce the old crash window: task result committed, terminal event absent.
+    result = {"operation": "sha256", "sha256": "legacy-result"}
+    with psycopg.connect(dsn) as conn:
+        conn.execute(
+            """
+            UPDATE tinyd_worker_tasks
+            SET status='succeeded', result=%s::jsonb, worker_id=NULL,
+                lease_until=NULL, updated_at=NOW()
+            WHERE event_id=%s
+            """,
+            (json.dumps(result), claim["event_id"]),
+        )
+
+    recovery_worker = DurableWorker(dsn, worker_id=f"reconciler-{uuid4()}")
+    assert recovery_worker.claim_next() is None
+    history = event_journal.history(UUID(response.json()["event"]["tenant_id"]), "run", UUID(run_id))
+    assert [event.event_type for event in history] == [
+        "run.requested", "run.started", "run.succeeded"
+    ]
+    assert history[-1].payload["recovered"] is True
+    with psycopg.connect(dsn) as conn:
+        row = conn.execute(
+            "SELECT status, result FROM tinyd_worker_tasks WHERE event_id=%s",
+            (claim["event_id"],),
+        ).fetchone()
+    assert row[0] == "succeeded"
+    assert row[1] == result
