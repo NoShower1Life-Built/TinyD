@@ -263,3 +263,30 @@ def test_expired_running_task_recovers_and_finishes_after_process_restart():
         "run.requested", "run.started", "run.started", "run.succeeded"
     ]
     assert history[-1].payload["lease_generation"] == 2
+
+
+
+def test_concurrent_workers_claim_distinct_tasks():
+    from concurrent.futures import ThreadPoolExecutor
+
+    tenant_id = f"worker-concurrent-{uuid4()}"
+    token = token_for(tenant_id)
+    run_ids = [str(uuid4()), str(uuid4())]
+    for run_id in run_ids:
+        response = client.post(
+            "/v1/agent/runs",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"run_id": run_id, "payload": {"operation": "sha256", "value": run_id}},
+        )
+        assert response.status_code == 201, response.text
+
+    dsn = os.environ["DATABASE_URL"]
+    workers = [
+        DurableWorker(dsn, worker_id=f"parallel-{uuid4()}"),
+        DurableWorker(dsn, worker_id=f"parallel-{uuid4()}"),
+    ]
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        claims = list(pool.map(lambda item: item.claim_next(), workers))
+    assert all(claim is not None for claim in claims)
+    assert len({claim["event_id"] for claim in claims}) == 2
+    assert {claim["run_id"] for claim in claims} == {UUID(value) for value in run_ids}
