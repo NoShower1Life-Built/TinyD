@@ -158,9 +158,11 @@ class KernelStore:
         if not 0.0 <= reward <= 1.0:
             raise ValueError("reward must be between 0 and 1")
         with self._lock, self._connect() as db:
-            row = db.execute("SELECT tool_name,reward FROM artifacts WHERE execution_id=?", (execution_id,)).fetchone()
+            row = db.execute("SELECT tool_name,status,reward FROM artifacts WHERE execution_id=?", (execution_id,)).fetchone()
             if row is None:
                 raise KernelError(f"unknown execution: {execution_id}")
+            if row["status"] != "succeeded":
+                raise KernelError("reward can only be assigned to successful executions")
             if row["reward"] is not None:
                 raise KernelError("reward already recorded for this execution")
             tool = row["tool_name"]
@@ -248,6 +250,19 @@ class Executor:
         tool = self.registry.get(tool_name)
         # Serialize before side effects so malformed/non-JSON input cannot run.
         input_json = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        existing = self.store.get_artifact(execution_id)
+        if existing is not None:
+            if existing["tool_name"] != tool_name or existing["input_json"] != input_json:
+                raise KernelError(f"execution id collision: {execution_id}")
+            output = json.loads(existing["output_json"]) if existing["output_json"] is not None else None
+            return {
+                "execution_id": execution_id,
+                "status": existing["status"],
+                "tool": tool_name,
+                **({"output": output} if existing["status"] == "succeeded" else {"error": existing["error"]}),
+                "artifact": existing,
+                "idempotent": True,
+            }
         try:
             self.gate.check(tool_name)
             output = tool.handler(dict(payload))
