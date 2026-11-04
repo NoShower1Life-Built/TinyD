@@ -5,7 +5,6 @@ import json
 import os
 import socket
 import time
-from datetime import datetime, timedelta, timezone
 from typing import Any
 from uuid import UUID, uuid5
 
@@ -96,8 +95,6 @@ class DurableWorker:
         )
 
     def claim_next(self) -> dict[str, Any] | None:
-        now = datetime.now(timezone.utc)
-        lease_until = now + timedelta(seconds=self.lease_seconds)
         with self._connect() as conn:
             with conn.transaction():
                 self._materialize_pending(conn)
@@ -107,7 +104,7 @@ class DurableWorker:
                         SELECT event_id
                         FROM tinyd_worker_tasks
                         WHERE status = 'pending'
-                           OR (status = 'running' AND lease_until <= %s)
+                           OR (status = 'running' AND lease_until <= NOW())
                         ORDER BY created_at, event_id
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
@@ -115,17 +112,17 @@ class DurableWorker:
                     UPDATE tinyd_worker_tasks AS task
                     SET status = 'running',
                         worker_id = %s,
-                        lease_until = %s,
+                        lease_until = NOW() + (%s * INTERVAL '1 second'),
                         lease_generation = task.lease_generation + 1,
                         attempts = task.attempts + 1,
-                        updated_at = %s,
+                        updated_at = NOW(),
                         error = NULL
                     FROM candidate
                     WHERE task.event_id = candidate.event_id
                     RETURNING task.event_id, task.tenant_id, task.run_id, task.payload,
                               task.attempts, task.lease_until, task.lease_generation
                     """,
-                    (now, self.worker_id, lease_until, now),
+                    (self.worker_id, self.lease_seconds),
                 ).fetchone()
                 return dict(row) if row else None
 
