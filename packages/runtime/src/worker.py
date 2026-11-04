@@ -82,7 +82,10 @@ class DurableWorker:
             )
 
     def _materialize_pending(self, conn) -> None:
-        # The journal is authoritative; this is repeatable and safe across workers.
+        # Multiple workers may materialize the same journal concurrently. Ignore
+        # any unique-key race here, then verify that every authoritative request
+        # maps to exactly the task identity and payload it describes. In particular,
+        # a different event_id reusing (tenant_id, run_id) must not be silently lost.
         conn.execute(
             """
             INSERT INTO tinyd_worker_tasks
@@ -90,9 +93,33 @@ class DurableWorker:
             SELECT event_id, tenant_id, run_id, event->'payload', 'pending'
             FROM tinyd_event_journal
             WHERE event_type = 'run.requested' AND run_id IS NOT NULL
-            ON CONFLICT (event_id) DO NOTHING
+            ON CONFLICT DO NOTHING
             """
         )
+        conflict = conn.execute(
+            """
+            SELECT event.event_id, event.tenant_id, event.run_id
+            FROM tinyd_event_journal AS event
+            LEFT JOIN tinyd_worker_tasks AS task
+              ON task.event_id = event.event_id
+            WHERE event.event_type = 'run.requested'
+              AND event.run_id IS NOT NULL
+              AND (
+                  task.event_id IS NULL
+                  OR task.tenant_id IS DISTINCT FROM event.tenant_id
+                  OR task.run_id IS DISTINCT FROM event.run_id
+                  OR task.payload IS DISTINCT FROM event.event->'payload'
+              )
+            ORDER BY event.created_at, event.event_id
+            LIMIT 1
+            """
+        ).fetchone()
+        if conflict is not None:
+            raise WorkerError(
+                "journal run request conflicts with an existing worker task "
+                f"(event_id={conflict['event_id']}, tenant_id={conflict['tenant_id']}, "
+                f"run_id={conflict['run_id']})"
+            )
 
     def _reconcile_terminal_outcomes(self, conn) -> None:
         """Repair terminal task rows left without journal evidence by older workers."""
