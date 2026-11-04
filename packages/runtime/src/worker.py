@@ -224,7 +224,7 @@ class DurableWorker:
                 ).fetchone()
                 if updated is None:
                     raise LeaseLost("worker lease was lost before success could be committed")
-                self._append_transition(conn, task, "run.succeeded", result)
+                self._append_transition(conn, task, "run.succeeded", {**result, "lease_generation": task["lease_generation"]})
 
     def _commit_failure(self, task: dict[str, Any], message: str) -> None:
         with self._connect() as conn:
