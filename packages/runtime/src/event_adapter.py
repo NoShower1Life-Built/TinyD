@@ -122,7 +122,10 @@ class LegacyEventAdapter:
             tenant_uuid = auth_uuid
 
         event_uuid, legacy_event_id = cls._event_id(event.get("id"))
-        aggregate_identity = mapping.identity(event)
+        try:
+            aggregate_identity = mapping.identity(event)
+        except EventMappingError as exc:
+            raise LegacyEventAdapterError(str(exc)) from exc
         aggregate_uuid = cls._deterministic_uuid(
             AGGREGATE_NAMESPACE,
             f"v{MAPPING_VERSION}\x00{tenant_uuid}\x00{mapping.aggregate_type}\x00{aggregate_identity}",
