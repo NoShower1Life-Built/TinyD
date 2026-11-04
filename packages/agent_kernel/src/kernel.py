@@ -6,7 +6,7 @@ import random
 import sqlite3
 import threading
 import time
-import traceback
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -95,11 +95,19 @@ class KernelStore:
                 );
             """)
 
-    def _connect(self) -> sqlite3.Connection:
+    @contextmanager
+    def _connect(self):
         db = sqlite3.connect(self.path, timeout=30, isolation_level="DEFERRED")
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
-        return db
+        try:
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     def is_enabled(self, tool_name: str) -> bool:
         with self._connect() as db:
