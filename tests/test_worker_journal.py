@@ -156,3 +156,110 @@ def test_websocket_streams_persisted_events_only_for_authorized_tenant():
             headers={"Authorization": f"Bearer {read_only_token}"},
         ) as websocket:
             websocket.receive_json()
+
+
+
+def test_reclaimed_lease_fences_stale_worker_commit():
+    import psycopg
+    from packages.runtime.src.worker import LeaseLost
+
+    tenant_id = f"worker-fence-{uuid4()}"
+    token = token_for(tenant_id)
+    run_id = str(uuid4())
+    response = client.post(
+        "/v1/agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"run_id": run_id, "payload": {"operation": "sha256", "value": "fence"}},
+    )
+    assert response.status_code == 201, response.text
+    dsn = os.environ["DATABASE_URL"]
+    first = DurableWorker(dsn, worker_id=f"fence-a-{uuid4()}")
+    old_claim = first.claim_next()
+    assert old_claim is not None
+    with psycopg.connect(dsn) as conn:
+        conn.execute(
+            "UPDATE tinyd_worker_tasks SET lease_until=NOW() - INTERVAL '1 second' WHERE event_id=%s",
+            (old_claim["event_id"],),
+        )
+    second = DurableWorker(dsn, worker_id=f"fence-b-{uuid4()}")
+    new_claim = second.claim_next()
+    assert new_claim is not None
+    assert new_claim["lease_generation"] == old_claim["lease_generation"] + 1
+    assert new_claim["attempts"] == old_claim["attempts"] + 1
+    with pytest.raises(LeaseLost):
+        first._commit_success(old_claim, {"operation": "sha256", "sha256": "stale"})
+    with psycopg.connect(dsn) as conn:
+        row = conn.execute(
+            "SELECT status, lease_generation, worker_id FROM tinyd_worker_tasks WHERE event_id=%s",
+            (old_claim["event_id"],),
+        ).fetchone()
+    assert row[0] == "running"
+    assert row[1] == new_claim["lease_generation"]
+    assert row[2] == second.worker_id
+
+
+def test_success_state_and_terminal_event_commit_atomically(monkeypatch):
+    import psycopg
+
+    tenant_id = f"worker-atomic-{uuid4()}"
+    token = token_for(tenant_id)
+    run_id = str(uuid4())
+    response = client.post(
+        "/v1/agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"run_id": run_id, "payload": {"operation": "sha256", "value": "atomic"}},
+    )
+    assert response.status_code == 201, response.text
+    worker = DurableWorker(os.environ["DATABASE_URL"], worker_id=f"atomic-{uuid4()}")
+    claim = worker.claim_next()
+    assert claim is not None
+    worker._append_started(claim)
+
+    def fail_append(*args, **kwargs):
+        raise RuntimeError("injected journal append failure")
+
+    monkeypatch.setattr(worker.journal, "append", fail_append)
+    with pytest.raises(RuntimeError, match="injected journal append failure"):
+        worker._commit_success(claim, {"operation": "sha256", "sha256": "x"})
+
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        row = conn.execute(
+            "SELECT status, result FROM tinyd_worker_tasks WHERE event_id=%s",
+            (claim["event_id"],),
+        ).fetchone()
+    assert row[0] == "running"
+    assert row[1] is None
+    history = event_journal.history(UUID(response.json()["event"]["tenant_id"]), "run", UUID(run_id))
+    assert [event.event_type for event in history] == ["run.requested", "run.started"]
+
+
+def test_expired_running_task_recovers_and_finishes_after_process_restart():
+    import psycopg
+
+    tenant_id = f"worker-recovery-{uuid4()}"
+    token = token_for(tenant_id)
+    run_id = str(uuid4())
+    response = client.post(
+        "/v1/agent/runs",
+        headers={"Authorization": f"Bearer {token}"},
+        json={"run_id": run_id, "payload": {"operation": "canonicalize_json", "value": {"recovered": True}}},
+    )
+    assert response.status_code == 201, response.text
+    first = DurableWorker(os.environ["DATABASE_URL"], worker_id=f"crashed-{uuid4()}")
+    first_claim = first.claim_next()
+    assert first_claim is not None
+    first._append_started(first_claim)
+    with psycopg.connect(os.environ["DATABASE_URL"]) as conn:
+        conn.execute(
+            "UPDATE tinyd_worker_tasks SET lease_until=NOW() - INTERVAL '1 second' WHERE event_id=%s",
+            (first_claim["event_id"],),
+        )
+
+    restarted = DurableWorker(os.environ["DATABASE_URL"], worker_id=f"restarted-{uuid4()}")
+    result = restarted.run_once()
+    assert result is not None and result["status"] == "succeeded"
+    history = event_journal.history(UUID(response.json()["event"]["tenant_id"]), "run", UUID(run_id))
+    assert [event.event_type for event in history] == [
+        "run.requested", "run.started", "run.started", "run.succeeded"
+    ]
+    assert history[-1].payload["lease_generation"] == 2
