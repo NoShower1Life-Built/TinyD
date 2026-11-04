@@ -2,7 +2,7 @@ name: TinyD Production Gate
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/worker-fencing-atomic-recovery]
   pull_request:
     branches: [main]
   workflow_dispatch:
