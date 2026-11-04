@@ -94,10 +94,49 @@ class DurableWorker:
             """
         )
 
+    def _reconcile_terminal_outcomes(self, conn) -> None:
+        """Repair terminal task rows left without journal evidence by older workers."""
+        rows = conn.execute(
+            """
+            SELECT task.event_id, task.tenant_id, task.run_id, task.attempts,
+                   task.lease_generation, task.result, task.error, task.status
+            FROM tinyd_worker_tasks AS task
+            WHERE task.status IN ('succeeded', 'failed')
+              AND NOT EXISTS (
+                  SELECT 1
+                  FROM tinyd_event_journal AS event
+                  WHERE event.tenant_id = task.tenant_id
+                    AND event.aggregate_type = 'run'
+                    AND event.aggregate_id = task.run_id
+                    AND event.event_type IN ('run.succeeded', 'run.failed')
+              )
+            ORDER BY task.updated_at, task.event_id
+            FOR UPDATE OF task SKIP LOCKED
+            """
+        ).fetchall()
+        for row in rows:
+            task = dict(row)
+            if task["status"] == "succeeded":
+                payload = {
+                    **(task["result"] or {}),
+                    "lease_generation": task["lease_generation"],
+                    "recovered": True,
+                }
+                self._append_transition(conn, task, "run.succeeded", payload)
+            else:
+                payload = {
+                    "error": task["error"] or "terminal failure recovered without journal evidence",
+                    "attempt": task["attempts"],
+                    "lease_generation": task["lease_generation"],
+                    "recovered": True,
+                }
+                self._append_transition(conn, task, "run.failed", payload)
+
     def claim_next(self) -> dict[str, Any] | None:
         with self._connect() as conn:
             with conn.transaction():
                 self._materialize_pending(conn)
+                self._reconcile_terminal_outcomes(conn)
                 row = conn.execute(
                     """
                     WITH candidate AS (
