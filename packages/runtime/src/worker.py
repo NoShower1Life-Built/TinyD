@@ -7,7 +7,7 @@ import socket
 import time
 from datetime import datetime, timedelta, timezone
 from typing import Any
-from uuid import NAMESPACE_URL, UUID, uuid5
+from uuid import UUID, uuid5
 
 import psycopg
 from psycopg.rows import dict_row
@@ -20,16 +20,20 @@ class WorkerError(RuntimeError):
     """Base error for durable worker failures."""
 
 
+class LeaseLost(WorkerError):
+    """The worker no longer owns the current lease generation."""
+
+
 class NoHandlerRegistered(WorkerError):
     """A persisted task requests an operation with no registered implementation."""
 
 
 class DurableWorker:
-    """PostgreSQL-leased worker that consumes run.requested journal events.
+    """PostgreSQL-leased worker with fenced claims and atomic terminal commits.
 
-    Claims are coordinated with row locks and expiring leases. Task outcomes are
-    written to the authoritative event journal; the worker never uses an
-    in-memory queue as a source of work.
+    Task execution is at-least-once across lease expiry. A worker may commit only
+    while its monotonically increasing lease generation remains current. Terminal
+    task state and its authoritative journal event share one PostgreSQL transaction.
     """
 
     def __init__(self, dsn: str, worker_id: str | None = None, lease_seconds: int = 60) -> None:
@@ -58,6 +62,7 @@ class DurableWorker:
                     status TEXT NOT NULL CHECK (status IN ('pending','running','succeeded','failed')),
                     worker_id TEXT,
                     lease_until TIMESTAMPTZ,
+                    lease_generation BIGINT NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
                     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
                     result JSONB,
                     error TEXT,
@@ -67,13 +72,18 @@ class DurableWorker:
                 )
                 """
             )
+            # Upgrade installations created before lease fencing was introduced.
+            conn.execute(
+                "ALTER TABLE tinyd_worker_tasks ADD COLUMN IF NOT EXISTS "
+                "lease_generation BIGINT NOT NULL DEFAULT 0"
+            )
             conn.execute(
                 "CREATE INDEX IF NOT EXISTS tinyd_worker_tasks_claim_idx "
                 "ON tinyd_worker_tasks (status, lease_until, created_at)"
             )
 
     def _materialize_pending(self, conn) -> None:
-        # The journal is authoritative. This insert is repeatable and safe across workers.
+        # The journal is authoritative; this is repeatable and safe across workers.
         conn.execute(
             """
             INSERT INTO tinyd_worker_tasks
@@ -97,7 +107,7 @@ class DurableWorker:
                         SELECT event_id
                         FROM tinyd_worker_tasks
                         WHERE status = 'pending'
-                           OR (status = 'running' AND lease_until < %s)
+                           OR (status = 'running' AND lease_until <= %s)
                         ORDER BY created_at, event_id
                         FOR UPDATE SKIP LOCKED
                         LIMIT 1
@@ -106,13 +116,14 @@ class DurableWorker:
                     SET status = 'running',
                         worker_id = %s,
                         lease_until = %s,
+                        lease_generation = task.lease_generation + 1,
                         attempts = task.attempts + 1,
                         updated_at = %s,
                         error = NULL
                     FROM candidate
                     WHERE task.event_id = candidate.event_id
                     RETURNING task.event_id, task.tenant_id, task.run_id, task.payload,
-                              task.attempts, task.lease_until
+                              task.attempts, task.lease_until, task.lease_generation
                     """,
                     (now, self.worker_id, lease_until, now),
                 ).fetchone()
@@ -131,13 +142,27 @@ class DurableWorker:
             return {"operation": operation, "sha256": hashlib.sha256(canonical.encode("utf-8")).hexdigest()}
         raise NoHandlerRegistered(f"no worker handler registered for operation: {operation!r}")
 
+    def _assert_current_lease(self, conn, task: dict[str, Any]) -> None:
+        row = conn.execute(
+            """
+            SELECT 1 FROM tinyd_worker_tasks
+            WHERE event_id=%s AND status='running' AND worker_id=%s
+              AND lease_generation=%s AND lease_until > NOW()
+            FOR UPDATE
+            """,
+            (task["event_id"], self.worker_id, task["lease_generation"]),
+        ).fetchone()
+        if row is None:
+            raise LeaseLost("worker lease was lost or superseded")
+
     def _append_transition(
         self,
+        conn,
         task: dict[str, Any],
         event_type: str,
         payload: dict[str, Any],
     ) -> EventEnvelope:
-        history = self.journal.history(task["tenant_id"], "run", task["run_id"])
+        history = self.journal.history(task["tenant_id"], "run", task["run_id"], conn=conn)
         if not history:
             raise WorkerError("claimed task has no authoritative run.requested event")
         last = history[-1]
@@ -169,54 +194,74 @@ class DurableWorker:
                 digest=self.journal.calculate_digest(transition, last.integrity.digest),
             )
         })
-        return self.journal.append(transition)
+        return self.journal.append(transition, conn=conn)
+
+    def _append_started(self, task: dict[str, Any]) -> None:
+        with self._connect() as conn:
+            with conn.transaction():
+                self._assert_current_lease(conn, task)
+                self._append_transition(
+                    conn, task, "run.started",
+                    {"worker_id": self.worker_id, "attempt": task["attempts"],
+                     "lease_generation": task["lease_generation"]},
+                )
+
+    def _commit_success(self, task: dict[str, Any], result: dict[str, Any]) -> None:
+        encoded = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        with self._connect() as conn:
+            with conn.transaction():
+                self._assert_current_lease(conn, task)
+                updated = conn.execute(
+                    """
+                    UPDATE tinyd_worker_tasks
+                    SET status='succeeded', result=%s::jsonb, lease_until=NULL,
+                        worker_id=NULL, updated_at=NOW()
+                    WHERE event_id=%s AND status='running' AND worker_id=%s
+                      AND lease_generation=%s
+                    RETURNING event_id
+                    """,
+                    (encoded, task["event_id"], self.worker_id, task["lease_generation"]),
+                ).fetchone()
+                if updated is None:
+                    raise LeaseLost("worker lease was lost before success could be committed")
+                self._append_transition(conn, task, "run.succeeded", result)
+
+    def _commit_failure(self, task: dict[str, Any], message: str) -> None:
+        with self._connect() as conn:
+            with conn.transaction():
+                self._assert_current_lease(conn, task)
+                updated = conn.execute(
+                    """
+                    UPDATE tinyd_worker_tasks
+                    SET status='failed', error=%s, lease_until=NULL,
+                        worker_id=NULL, updated_at=NOW()
+                    WHERE event_id=%s AND status='running' AND worker_id=%s
+                      AND lease_generation=%s
+                    RETURNING event_id
+                    """,
+                    (message, task["event_id"], self.worker_id, task["lease_generation"]),
+                ).fetchone()
+                if updated is None:
+                    raise LeaseLost("worker lease was lost before failure could be committed")
+                self._append_transition(
+                    conn, task, "run.failed",
+                    {"error": message, "attempt": task["attempts"],
+                     "lease_generation": task["lease_generation"]},
+                )
 
     def run_once(self) -> dict[str, Any] | None:
         task = self.claim_next()
         if task is None:
             return None
+        self._append_started(task)
         try:
-            self._append_transition(
-                task,
-                "run.started",
-                {"worker_id": self.worker_id, "attempt": task["attempts"]},
-            )
             result = self._execute_payload(task["payload"] or {})
-            with self._connect() as conn:
-                with conn.transaction():
-                    updated = conn.execute(
-                        """
-                        UPDATE tinyd_worker_tasks
-                        SET status='succeeded', result=%s::jsonb, lease_until=NULL,
-                            updated_at=NOW()
-                        WHERE event_id=%s AND status='running' AND worker_id=%s
-                        RETURNING event_id
-                        """,
-                        (json.dumps(result, sort_keys=True, separators=(",", ":")), task["event_id"], self.worker_id),
-                    ).fetchone()
-                    if updated is None:
-                        raise WorkerError("worker lease was lost before success could be committed")
-            self._append_transition(task, "run.succeeded", result)
-            return {"event_id": str(task["event_id"]), "status": "succeeded", "result": result}
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"[:2000]
-            with self._connect() as conn:
-                with conn.transaction():
-                    conn.execute(
-                        """
-                        UPDATE tinyd_worker_tasks
-                        SET status='failed', error=%s, lease_until=NULL, updated_at=NOW()
-                        WHERE event_id=%s AND status='running' AND worker_id=%s
-                        """,
-                        (message, task["event_id"], self.worker_id),
-                    )
-            try:
-                self._append_transition(task, "run.failed", {"error": message, "attempt": task["attempts"]})
-            except Exception:
-                # The task row records the operational failure; a later recovery pass
-                # can reconcile a missing transition without losing the source request.
-                pass
+            self._commit_failure(task, message)
             return {"event_id": str(task["event_id"]), "status": "failed", "error": message}
+        self._commit_success(task, result)
+        return {"event_id": str(task["event_id"]), "status": "succeeded", "result": result}
 
     def run_forever(self, poll_seconds: float = 0.5) -> None:
         if poll_seconds <= 0:
