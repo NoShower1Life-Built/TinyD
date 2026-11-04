@@ -130,126 +130,126 @@ class PostgresEventJournal:
         if event.sequence < 1:
             raise EventSequenceConflict("event sequence must be >= 1")
 
-            lock_left, lock_right = self._advisory_lock_key(event.event_id)
-            conn.execute(
-                "SELECT pg_advisory_xact_lock(%s, %s)",
-                (lock_left, lock_right),
+        lock_left, lock_right = self._advisory_lock_key(event.event_id)
+        conn.execute(
+            "SELECT pg_advisory_xact_lock(%s, %s)",
+            (lock_left, lock_right),
+        )
+
+        supplied_digest = self.calculate_digest(
+            event, event.integrity.previous_digest
+        )
+        if event.integrity.digest != supplied_digest:
+            raise EventIntegrityError(
+                "event digest does not match canonical event content"
             )
 
-            supplied_digest = self.calculate_digest(
-                event, event.integrity.previous_digest
+        existing = conn.execute(
+            "SELECT event FROM tinyd_event_journal WHERE event_id = %s",
+            (event.event_id,),
+        ).fetchone()
+        if existing is not None:
+            persisted = self._event_from_row(existing)
+            persisted_body = persisted.model_dump(mode="json")
+            supplied_body = event.model_dump(mode="json")
+            persisted_body.pop("occurred_at", None)
+            supplied_body.pop("occurred_at", None)
+            persisted_integrity = persisted_body.pop("integrity")
+            supplied_integrity = supplied_body.pop("integrity")
+            same_semantic_event = (
+                persisted_body == supplied_body
+                and persisted_integrity.get("previous_digest")
+                == supplied_integrity.get("previous_digest")
             )
-            if event.integrity.digest != supplied_digest:
-                raise EventIntegrityError(
-                    "event digest does not match canonical event content"
-                )
+            if not same_semantic_event:
+                raise EventIntegrityError(f"event id collision: {event.event_id}")
+            return persisted
 
-            existing = conn.execute(
-                "SELECT event FROM tinyd_event_journal WHERE event_id = %s",
-                (event.event_id,),
-            ).fetchone()
-            if existing is not None:
-                persisted = self._event_from_row(existing)
-                persisted_body = persisted.model_dump(mode="json")
-                supplied_body = event.model_dump(mode="json")
-                persisted_body.pop("occurred_at", None)
-                supplied_body.pop("occurred_at", None)
-                persisted_integrity = persisted_body.pop("integrity")
-                supplied_integrity = supplied_body.pop("integrity")
-                same_semantic_event = (
-                    persisted_body == supplied_body
-                    and persisted_integrity.get("previous_digest")
-                    == supplied_integrity.get("previous_digest")
-                )
-                if not same_semantic_event:
-                    raise EventIntegrityError(f"event id collision: {event.event_id}")
-                return persisted
+        conn.execute(
+            """
+            INSERT INTO tinyd_event_journal_heads
+                (tenant_id, aggregate_type, aggregate_id, last_sequence, last_digest)
+            VALUES (%s, %s, %s, 0, NULL)
+            ON CONFLICT (tenant_id, aggregate_type, aggregate_id) DO NOTHING
+            """,
+            (event.tenant_id, event.aggregate_type, event.aggregate_id),
+        )
+        head = conn.execute(
+            """
+            SELECT last_sequence, last_digest
+            FROM tinyd_event_journal_heads
+            WHERE tenant_id = %s AND aggregate_type = %s AND aggregate_id = %s
+            FOR UPDATE
+            """,
+            (event.tenant_id, event.aggregate_type, event.aggregate_id),
+        ).fetchone()
+        if head is None:
+            raise EventJournalError("aggregate head disappeared during append")
 
-            conn.execute(
-                """
-                INSERT INTO tinyd_event_journal_heads
-                    (tenant_id, aggregate_type, aggregate_id, last_sequence, last_digest)
-                VALUES (%s, %s, %s, 0, NULL)
-                ON CONFLICT (tenant_id, aggregate_type, aggregate_id) DO NOTHING
-                """,
-                (event.tenant_id, event.aggregate_type, event.aggregate_id),
+        expected_sequence = int(head["last_sequence"]) + 1
+        previous_digest = head["last_digest"]
+        if event.sequence != expected_sequence:
+            raise EventSequenceConflict(
+                f"expected aggregate sequence {expected_sequence}, received {event.sequence}"
             )
-            head = conn.execute(
-                """
-                SELECT last_sequence, last_digest
-                FROM tinyd_event_journal_heads
-                WHERE tenant_id = %s AND aggregate_type = %s AND aggregate_id = %s
-                FOR UPDATE
-                """,
-                (event.tenant_id, event.aggregate_type, event.aggregate_id),
-            ).fetchone()
-            if head is None:
-                raise EventJournalError("aggregate head disappeared during append")
+        if event.integrity.previous_digest != previous_digest:
+            raise EventIntegrityError("previous digest does not match aggregate head")
 
-            expected_sequence = int(head["last_sequence"]) + 1
-            previous_digest = head["last_digest"]
-            if event.sequence != expected_sequence:
-                raise EventSequenceConflict(
-                    f"expected aggregate sequence {expected_sequence}, received {event.sequence}"
-                )
-            if event.integrity.previous_digest != previous_digest:
-                raise EventIntegrityError("previous digest does not match aggregate head")
+        expected_digest = self.calculate_digest(event, previous_digest)
+        if event.integrity.digest != expected_digest:
+            raise EventIntegrityError("event digest does not match canonical event content")
 
-            expected_digest = self.calculate_digest(event, previous_digest)
-            if event.integrity.digest != expected_digest:
-                raise EventIntegrityError("event digest does not match canonical event content")
-
-            conn.execute(
-                """
-                INSERT INTO tinyd_event_journal (
-                    event_id, tenant_id, event_type, event_version, occurred_at,
-                    agent_id, conversation_id, run_id, task_id, step_id,
-                    correlation_id, causation_id, aggregate_type, aggregate_id,
-                    sequence, producer, event, previous_digest, digest
-                ) VALUES (
-                    %(event_id)s, %(tenant_id)s, %(event_type)s, %(event_version)s, %(occurred_at)s,
-                    %(agent_id)s, %(conversation_id)s, %(run_id)s, %(task_id)s, %(step_id)s,
-                    %(correlation_id)s, %(causation_id)s, %(aggregate_type)s, %(aggregate_id)s,
-                    %(sequence)s, %(producer)s, %(event)s::jsonb, %(previous_digest)s, %(digest)s
-                )
-                """,
-                {
-                    "event_id": event.event_id,
-                    "tenant_id": event.tenant_id,
-                    "event_type": event.event_type,
-                    "event_version": event.event_version,
-                    "occurred_at": event.occurred_at,
-                    "agent_id": event.agent_id,
-                    "conversation_id": event.conversation_id,
-                    "run_id": event.run_id,
-                    "task_id": event.task_id,
-                    "step_id": event.step_id,
-                    "correlation_id": event.correlation_id,
-                    "causation_id": event.causation_id,
-                    "aggregate_type": event.aggregate_type,
-                    "aggregate_id": event.aggregate_id,
-                    "sequence": event.sequence,
-                    "producer": event.producer,
-                    "event": json.dumps(event.model_dump(mode="json"), sort_keys=True, separators=(",", ":")),
-                    "previous_digest": previous_digest,
-                    "digest": expected_digest,
-                },
+        conn.execute(
+            """
+            INSERT INTO tinyd_event_journal (
+                event_id, tenant_id, event_type, event_version, occurred_at,
+                agent_id, conversation_id, run_id, task_id, step_id,
+                correlation_id, causation_id, aggregate_type, aggregate_id,
+                sequence, producer, event, previous_digest, digest
+            ) VALUES (
+                %(event_id)s, %(tenant_id)s, %(event_type)s, %(event_version)s, %(occurred_at)s,
+                %(agent_id)s, %(conversation_id)s, %(run_id)s, %(task_id)s, %(step_id)s,
+                %(correlation_id)s, %(causation_id)s, %(aggregate_type)s, %(aggregate_id)s,
+                %(sequence)s, %(producer)s, %(event)s::jsonb, %(previous_digest)s, %(digest)s
             )
-            conn.execute(
-                """
-                UPDATE tinyd_event_journal_heads
-                SET last_sequence = %s, last_digest = %s
-                WHERE tenant_id = %s AND aggregate_type = %s AND aggregate_id = %s
-                """,
-                (
-                    event.sequence,
-                    expected_digest,
-                    event.tenant_id,
-                    event.aggregate_type,
-                    event.aggregate_id,
-                ),
-            )
-            return event
+            """,
+            {
+                "event_id": event.event_id,
+                "tenant_id": event.tenant_id,
+                "event_type": event.event_type,
+                "event_version": event.event_version,
+                "occurred_at": event.occurred_at,
+                "agent_id": event.agent_id,
+                "conversation_id": event.conversation_id,
+                "run_id": event.run_id,
+                "task_id": event.task_id,
+                "step_id": event.step_id,
+                "correlation_id": event.correlation_id,
+                "causation_id": event.causation_id,
+                "aggregate_type": event.aggregate_type,
+                "aggregate_id": event.aggregate_id,
+                "sequence": event.sequence,
+                "producer": event.producer,
+                "event": json.dumps(event.model_dump(mode="json"), sort_keys=True, separators=(",", ":")),
+                "previous_digest": previous_digest,
+                "digest": expected_digest,
+            },
+        )
+        conn.execute(
+            """
+            UPDATE tinyd_event_journal_heads
+            SET last_sequence = %s, last_digest = %s
+            WHERE tenant_id = %s AND aggregate_type = %s AND aggregate_id = %s
+            """,
+            (
+                event.sequence,
+                expected_digest,
+                event.tenant_id,
+                event.aggregate_type,
+                event.aggregate_id,
+            ),
+        )
+        return event
 
 
     def get(self, event_id: UUID, tenant_id: UUID) -> EventEnvelope | None:
