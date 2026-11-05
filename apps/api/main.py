@@ -231,6 +231,11 @@ def run_workflow(request: WorkflowRun, tenant: Tenant = Depends(require_tenant))
 @app.post("/v1/replay")
 def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "executions:write")
+    if journal is not None:
+        raise HTTPException(
+            status_code=501,
+            detail="canonical replay projection is not implemented; legacy replay is disabled for journal-backed executions",
+        )
     event = engine.get(request.event_id)
     if event is None or event.get("tenant_id") != tenant.id:
         raise HTTPException(status_code=404, detail="event not found")
