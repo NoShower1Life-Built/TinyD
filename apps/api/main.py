@@ -190,6 +190,7 @@ def run_workflow(request: WorkflowRun, tenant: Tenant = Depends(require_tenant))
         ).hexdigest()
         canonical_event_id = uuid5(tenant_uuid, f"execution:{key}")
         aggregate_id = uuid5(tenant_uuid, f"workflow:{request.workflow}")
+        already_persisted = journal.get(canonical_event_id, tenant_uuid) is not None
         try:
             persisted = append_tenant_event(
                 journal,
@@ -208,12 +209,11 @@ def run_workflow(request: WorkflowRun, tenant: Tenant = Depends(require_tenant))
             )
         except EventJournalError as exc:
             raise HTTPException(status_code=409, detail=str(exc)) from exc
-        aggregate_history = journal.history(tenant_uuid, "workflow_execution", aggregate_id)
         return {
             "status": "accepted",
-            "event_id": legacy_id,
-            "journal_event_id": str(persisted.event_id),
-            "idempotent": persisted.sequence < len(aggregate_history),
+            "event_id": str(persisted.event_id),
+            "legacy_event_id": legacy_id,
+            "idempotent": already_persisted,
             "event": persisted.model_dump(mode="json"),
             "persistence": "canonical_journal",
         }
