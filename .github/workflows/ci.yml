@@ -17,7 +17,9 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install runtime and test dependencies
-        run: python -m pip install -e '.[test]'
+        run: |
+          python -m pip install -e '.[test]'
+          python -m pip install -e observability/tinyd_evidence
       - name: Compile Python sources
         run: python -m compileall apps packages tests
       - name: Execute API and runtime tests
