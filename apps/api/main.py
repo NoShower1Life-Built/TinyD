@@ -5,7 +5,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
-from uuid import UUID
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -103,13 +103,7 @@ def append_journal_event(
     require_scope(tenant, "events:write")
     if journal is None:
         raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is unavailable")
-    try:
-        tenant_uuid = UUID(tenant.id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="authenticated tenant identity must be a UUID for canonical journal writes",
-        ) from exc
+    tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant.id}")
     try:
         event = append_tenant_event(
             journal,
@@ -136,13 +130,7 @@ def get_journal_event(
     require_scope(tenant, "events:read")
     if journal is None:
         raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is unavailable")
-    try:
-        tenant_uuid = UUID(tenant.id)
-    except ValueError as exc:
-        raise HTTPException(
-            status_code=400,
-            detail="authenticated tenant identity must be a UUID for canonical journal reads",
-        ) from exc
+    tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant.id}")
     event = journal.get(event_id, tenant_uuid)
     if event is None:
         raise HTTPException(status_code=404, detail="event not found")
