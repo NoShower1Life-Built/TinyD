@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -14,10 +15,13 @@ from apps.api.billing import create_checkout_session, report_meter_event, verify
 from apps.api.registry import get_package, list_packages, manifest_digest
 from packages.runtime.src.engine import RuntimeEngine
 from packages.runtime.src.ledger import PostgresEventLedger
+from packages.runtime.src.journal import PostgresEventJournal, EventJournalError
+from packages.runtime.src.journal_service import append_tenant_event
 
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
 _database_url = os.getenv("DATABASE_URL", "").strip()
 engine = RuntimeEngine(ledger=PostgresEventLedger(_database_url) if _database_url else None)
+journal = PostgresEventJournal(_database_url) if _database_url else None
 
 
 class WorkflowRun(BaseModel):
@@ -27,6 +31,17 @@ class WorkflowRun(BaseModel):
 
 class ReplayRequest(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
+
+
+class JournalAppendRequest(BaseModel):
+    event_type: str = Field(min_length=1, max_length=200)
+    aggregate_type: str = Field(min_length=1, max_length=100)
+    aggregate_id: UUID
+    payload: dict[str, Any] = Field(default_factory=dict)
+    event_id: UUID | None = None
+    agent_id: UUID | None = None
+    correlation_id: UUID | None = None
+    causation_id: UUID | None = None
 
 
 class UsageRequest(BaseModel):
@@ -76,7 +91,62 @@ def runtime_status(tenant: Tenant = Depends(require_tenant)):
         "event_count": len(snapshot),
         "replay_ready": any(event.get("type") == "workflow.requested" for event in snapshot.values()),
         "verification": "not_configured",
+        "canonical_journal": "postgres_connected" if journal else "unavailable",
     }
+
+
+@app.post("/v1/journal/events", status_code=201)
+def append_journal_event(
+    request: JournalAppendRequest,
+    tenant: Tenant = Depends(require_tenant),
+):
+    require_scope(tenant, "events:write")
+    if journal is None:
+        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is unavailable")
+    try:
+        tenant_uuid = UUID(tenant.id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="authenticated tenant identity must be a UUID for canonical journal writes",
+        ) from exc
+    try:
+        event = append_tenant_event(
+            journal,
+            tenant_id=tenant_uuid,
+            event_type=request.event_type,
+            aggregate_type=request.aggregate_type,
+            aggregate_id=request.aggregate_id,
+            payload=request.payload,
+            event_id=request.event_id,
+            agent_id=request.agent_id,
+            correlation_id=request.correlation_id,
+            causation_id=request.causation_id,
+        )
+    except EventJournalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "appended", "event": event.model_dump(mode="json")}
+
+
+@app.get("/v1/journal/events/{event_id}")
+def get_journal_event(
+    event_id: UUID,
+    tenant: Tenant = Depends(require_tenant),
+):
+    require_scope(tenant, "events:read")
+    if journal is None:
+        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is unavailable")
+    try:
+        tenant_uuid = UUID(tenant.id)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="authenticated tenant identity must be a UUID for canonical journal reads",
+        ) from exc
+    event = journal.get(event_id, tenant_uuid)
+    if event is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    return {"event": event.model_dump(mode="json")}
 
 
 @app.get("/v1/events")
