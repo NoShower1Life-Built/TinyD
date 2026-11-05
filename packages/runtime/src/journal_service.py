@@ -90,7 +90,7 @@ def append_tenant_event(
         )
         try:
             return journal.append(candidate)
-        except EventSequenceConflict:
+        except (EventSequenceConflict, EventIntegrityError) as conflict:
             existing = journal.get(event_id, tenant_id)
             if existing is not None:
                 expected = {
@@ -108,6 +108,8 @@ def append_tenant_event(
                 if actual != expected:
                     raise EventIntegrityError(f"event id collision: {event_id}")
                 return existing
+            if isinstance(conflict, EventIntegrityError):
+                raise
             continue
     raise EventSequenceConflict(
         f"could not append event after {max_attempts} concurrent sequence conflicts"
