@@ -5,6 +5,7 @@ import json
 import os
 from datetime import datetime, timezone
 from typing import Any
+from uuid import NAMESPACE_URL, UUID, uuid5
 
 from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -14,19 +15,34 @@ from apps.api.billing import create_checkout_session, report_meter_event, verify
 from apps.api.registry import get_package, list_packages, manifest_digest
 from packages.runtime.src.engine import RuntimeEngine
 from packages.runtime.src.ledger import PostgresEventLedger
+from packages.runtime.src.journal import PostgresEventJournal, EventJournalError
+from packages.runtime.src.journal_service import append_tenant_event
 
 app = FastAPI(title="TinyD Control Plane API", version="1.3")
 _database_url = os.getenv("DATABASE_URL", "").strip()
 engine = RuntimeEngine(ledger=PostgresEventLedger(_database_url) if _database_url else None)
+journal = PostgresEventJournal(_database_url) if _database_url else None
 
 
 class WorkflowRun(BaseModel):
     workflow: str = Field(min_length=1, max_length=200)
     payload: dict[str, Any] = Field(default_factory=dict)
+    idempotency_key: str | None = Field(default=None, min_length=1, max_length=200)
 
 
 class ReplayRequest(BaseModel):
     event_id: str = Field(min_length=1, max_length=128)
+
+
+class JournalAppendRequest(BaseModel):
+    event_type: str = Field(min_length=1, max_length=200)
+    aggregate_type: str = Field(min_length=1, max_length=100)
+    aggregate_id: UUID
+    payload: dict[str, Any] = Field(default_factory=dict)
+    event_id: UUID | None = None
+    agent_id: UUID | None = None
+    correlation_id: UUID | None = None
+    causation_id: UUID | None = None
 
 
 class UsageRequest(BaseModel):
@@ -55,6 +71,10 @@ def now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def canonical_tenant_id(tenant: Tenant) -> UUID:
+    return uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant.id}")
+
+
 def emit(event: dict[str, Any]) -> dict[str, Any]:
     return engine.execute(event)
 
@@ -67,41 +87,155 @@ def health():
 @app.get("/v1/runtime/status")
 def runtime_status(tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "events:read")
+    if journal is not None:
+        history = journal.tenant_history(canonical_tenant_id(tenant))
+        return {
+            "service": "tinyd-runtime",
+            "mode": "connected",
+            "persistence": "postgres",
+            "execution_count": sum(1 for event in history if event.event_type == "workflow.requested"),
+            "event_count": len(history),
+            "replay_ready": False,
+            "verification": "not_configured",
+            "canonical_journal": "postgres_connected",
+            "execution_store": "canonical_journal",
+        }
     snapshot = engine.tenant_snapshot(tenant.id)
     return {
         "service": "tinyd-runtime",
-        "mode": "connected",
-        "persistence": "postgres" if engine.ledger else "memory",
+        "mode": "development",
+        "persistence": "memory",
         "execution_count": sum(1 for event in snapshot.values() if event.get("type") == "workflow.requested"),
         "event_count": len(snapshot),
         "replay_ready": any(event.get("type") == "workflow.requested" for event in snapshot.values()),
         "verification": "not_configured",
+        "canonical_journal": "unavailable",
+        "execution_store": "legacy_development_engine",
     }
+
+
+@app.post("/v1/journal/events", status_code=201)
+def append_journal_event(
+    request: JournalAppendRequest,
+    tenant: Tenant = Depends(require_tenant),
+):
+    require_scope(tenant, "events:write")
+    if journal is None:
+        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is unavailable")
+    tenant_uuid = canonical_tenant_id(tenant)
+    try:
+        event = append_tenant_event(
+            journal,
+            tenant_id=tenant_uuid,
+            event_type=request.event_type,
+            aggregate_type=request.aggregate_type,
+            aggregate_id=request.aggregate_id,
+            payload=request.payload,
+            event_id=request.event_id,
+            agent_id=request.agent_id,
+            correlation_id=request.correlation_id,
+            causation_id=request.causation_id,
+        )
+    except EventJournalError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"status": "appended", "event": event.model_dump(mode="json")}
+
+
+@app.get("/v1/journal/events/{event_id}")
+def get_journal_event(
+    event_id: UUID,
+    tenant: Tenant = Depends(require_tenant),
+):
+    require_scope(tenant, "events:read")
+    if journal is None:
+        raise HTTPException(status_code=503, detail="canonical PostgreSQL event journal is unavailable")
+    tenant_uuid = uuid5(NAMESPACE_URL, f"tinyd:tenant:{tenant.id}")
+    event = journal.get(event_id, tenant_uuid)
+    if event is None:
+        raise HTTPException(status_code=404, detail="event not found")
+    return {"event": event.model_dump(mode="json")}
 
 
 @app.get("/v1/events")
 def events(tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "events:read")
-    return {"tenant_id": tenant.id, "events": list(engine.tenant_snapshot(tenant.id).values())}
+    if journal is not None:
+        history = journal.tenant_history(canonical_tenant_id(tenant))
+        return {
+            "tenant_id": tenant.id,
+            "events": [event.model_dump(mode="json") for event in history],
+            "source": "canonical_journal",
+        }
+    return {
+        "tenant_id": tenant.id,
+        "events": list(engine.tenant_snapshot(tenant.id).values()),
+        "source": "legacy_development_engine",
+    }
 
 
 @app.post("/v1/executions", status_code=201)
 def run_workflow(request: WorkflowRun, tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "executions:write")
+    semantic_request = {
+        "tenant_id": tenant.id,
+        "workflow": request.workflow,
+        "payload": request.payload,
+        "idempotency_key": request.idempotency_key,
+    }
+    legacy_id = event_id_for(request.workflow, semantic_request)
+    if journal is not None:
+        tenant_uuid = canonical_tenant_id(tenant)
+        key = request.idempotency_key or hashlib.sha256(
+            json.dumps(semantic_request, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+        canonical_event_id = uuid5(tenant_uuid, f"execution:{key}")
+        aggregate_id = uuid5(tenant_uuid, f"workflow:{request.workflow}")
+        already_persisted = journal.get(canonical_event_id, tenant_uuid) is not None
+        try:
+            persisted = append_tenant_event(
+                journal,
+                tenant_id=tenant_uuid,
+                event_type="workflow.requested",
+                aggregate_type="workflow_execution",
+                aggregate_id=aggregate_id,
+                payload={
+                    "workflow": request.workflow,
+                    "request_payload": request.payload,
+                    "idempotency_key": key,
+                },
+                event_id=canonical_event_id,
+                agent_id=uuid5(tenant_uuid, "tinyd:control-plane"),
+                correlation_id=canonical_event_id,
+            )
+        except EventJournalError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return {
+            "status": "accepted",
+            "event_id": str(persisted.event_id),
+            "legacy_event_id": legacy_id,
+            "idempotent": already_persisted,
+            "event": persisted.model_dump(mode="json"),
+            "persistence": "canonical_journal",
+        }
     event = {
-        "id": event_id_for(request.workflow, {"tenant_id": tenant.id, "payload": request.payload}),
+        "id": legacy_id,
         "type": "workflow.requested",
         "tenant_id": tenant.id,
         "workflow": request.workflow,
         "payload": request.payload,
         "timestamp": now(),
     }
-    return {**emit(event), "event": event}
+    return {**emit(event), "event": event, "persistence": "legacy_development_engine"}
 
 
 @app.post("/v1/replay")
 def replay(request: ReplayRequest, tenant: Tenant = Depends(require_tenant)):
     require_scope(tenant, "executions:write")
+    if journal is not None:
+        raise HTTPException(
+            status_code=501,
+            detail="canonical replay projection is not implemented; legacy replay is disabled for journal-backed executions",
+        )
     event = engine.get(request.event_id)
     if event is None or event.get("tenant_id") != tenant.id:
         raise HTTPException(status_code=404, detail="event not found")
